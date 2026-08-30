@@ -80,6 +80,23 @@ def load_manifest() -> dict:
     return manifest
 
 
+def data_revision(manifest: dict | None = None) -> str:
+    """A stable fingerprint of the source data the repo is currently sitting on.
+
+    Digests only (filename, sha256) pairs, not fetch timestamps -- re-downloading
+    identical bytes must not change the revision, while an upstream stat
+    correction must. This is what results get stamped with so a model or a
+    backtest can be tied to the exact data it was produced from.
+    """
+    if manifest is None:
+        manifest = load_manifest()
+    payload = "\n".join(
+        f"{name}:{record.get('sha256', '')}"
+        for name, record in sorted(manifest.get("files", {}).items())
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def write_manifest(manifest: dict) -> None:
     manifest["generated_utc"] = datetime.now(timezone.utc).isoformat()
     manifest["files"] = dict(sorted(manifest["files"].items()))
