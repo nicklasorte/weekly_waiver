@@ -587,3 +587,68 @@ reason it is deliberate rather than missing: automating the report would mean
 handing the scheduled job write access to the ledger that grades it. It also
 states the new expected outcome — no commit on a quiet week is correct, and the
 Actions tab is where "it ran" is confirmed.
+
+### 4.6 The run on `main`: **PASSED**, and the commit means something
+
+PR #12 merged as `e345c2f`; `workflow_dispatch` on `main` for 2025 week 8 is
+[run #3](https://github.com/nicklasorte/weekly_waiver/actions/runs/33340045886),
+green in 51 seconds. Every step passed on the first attempt — no repair needed
+this time, which is what §3 was for.
+
+| step | result |
+| --- | --- |
+| `make install` | pinned set installed on the runner, no resolver conflict |
+| `make test` | 62 tests OK |
+| `make data` | 13 files |
+| `make panel` | built |
+| `make weekly SEASON=2025 WEEK=8` | table written |
+| Commit results | committed and pushed `93881a0` |
+
+It **did** commit, and that is the result worth reading closely. The entire
+commit is three lines:
+
+```
+ data/raw/MANIFEST.json            | 2 +-
+ outputs/weekly/LAST_MANIFEST.json | 4 ++--
+
+-  "sha256":   "0d581221cfddf39e30230ebc970dfa17f3404eed9cb1b24850ce238da22b9e21",
++  "sha256":   "edc7d01f94c9e23f1180c6678d6640374bc7ee5a72fa34c39991652ce1718ac6",
+-  "revision": "ebfa356a7b9c5b6c6b298100da870da2865dd99f30b42b85f8aee242ac4ab8bd",
++  "revision": "383d351e4209704ac9073467a08f06d76ef0baff6a0f5befc15c5b0e61485eed",
+-  "games.csv": "0d581221…",
++  "games.csv": "edc7d01f…",
+```
+
+`games.csv` was republished upstream again — to `edc7d01f…`, the same digest the
+verification run in §4.3 independently saw an hour earlier — and the data
+revision follows it. That is a real change to real data, which is exactly what a
+commit from this job is now supposed to mean.
+
+Two absences say as much as the diff does:
+
+- **No timestamp lines.** Under the old code this same run would additionally
+  have rewritten `generated_utc`, all thirteen `fetched_utc` stamps and the
+  `recorded` date — 15 lines of churn wrapped around 3 lines of signal. It is
+  now 3 lines of signal.
+- **`outputs/weekly/2025/wk08.csv` was not committed.** The runner regenerated it
+  and it compared equal to what is already in the repo, so it was never staged.
+  Third machine, third run, same 134 rows — now under pinned libraries and a
+  load-time version assertion rather than by luck.
+
+So the honest reading of this run: the noise-commit fix did not make the commit
+disappear, because there was something real to commit. It made the commit
+legible. A run with nothing but a new clock behind it would have hit
+`nothing changed` and pushed nothing, which is the case that used to be
+unreachable.
+
+One thing to keep in mind for the first unattended Tuesday: `games.csv` has now
+been republished three times in under two hours. If that cadence holds through
+the season, most Tuesdays will produce a one-line manifest commit rather than
+none — still a record of change, but of upstream churn rather than of the table.
+The weekly table itself is the file to watch in the diff; the manifest moving
+alone means nflverse republished, not that this week's ranking did.
+
+Also confirmed on the runner, incidentally: the deprecation warning §3.5 flagged
+is still there and still harmless — `actions/checkout@v4` and
+`actions/setup-python@v5` were force-upgraded to Node 24. It is in the README's
+Known gaps now rather than only here.
