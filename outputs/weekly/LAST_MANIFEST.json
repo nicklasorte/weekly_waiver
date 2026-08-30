@@ -1,7 +1,7 @@
 {
-  "revision": "ebfa356a7b9c5b6c6b298100da870da2865dd99f30b42b85f8aee242ac4ab8bd",
+  "revision": "383d351e4209704ac9073467a08f06d76ef0baff6a0f5befc15c5b0e61485eed",
   "files": {
-    "games.csv": "0d581221cfddf39e30230ebc970dfa17f3404eed9cb1b24850ce238da22b9e21",
+    "games.csv": "edc7d01f94c9e23f1180c6678d6640374bc7ee5a72fa34c39991652ce1718ac6",
     "play_by_play_2022.csv.gz": "0c69a71eb39498956c7b1d5c1ca52ce7fe679934a95d1af249facb5ea9829ea4",
     "play_by_play_2023.csv.gz": "4649804ee0f0a40b41e51ec75a1ce921949d7fab5459213488656b92f78560e8",
     "play_by_play_2024.csv.gz": "23370d5d10f8104d80d46a1fc5e61f4f6f5a3263fe96fe2dd629913cfcb08c06",

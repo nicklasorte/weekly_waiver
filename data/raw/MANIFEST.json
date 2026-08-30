@@ -2,7 +2,7 @@
   "files": {
     "games.csv": {
       "url": "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv",
-      "sha256": "0d581221cfddf39e30230ebc970dfa17f3404eed9cb1b24850ce238da22b9e21",
+      "sha256": "edc7d01f94c9e23f1180c6678d6640374bc7ee5a72fa34c39991652ce1718ac6",
       "bytes": 2177172
     },
     "play_by_play_2022.csv.gz": {
