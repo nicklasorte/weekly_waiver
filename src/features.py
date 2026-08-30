@@ -20,6 +20,17 @@ Two documented judgement calls, both stated here rather than buried:
    complexity for a prior that barely moves; the choice is called out here so it
    is a decision rather than an oversight.
 
+   `eb_tgt_share` and `eb_car_share` are the ONLY two columns this file produces
+   that depend on which other seasons are in the build. Every other column is
+   computed within a single (player, season) or (season, position, week) group,
+   so a row for season S is bit-identical whether the build covers S alone or S
+   through 2025 -- `tests/test_features.py::test_only_eb_columns_cross_seasons`
+   asserts exactly that rather than leaving it to be believed. For live weekly
+   scoring the shared prior is contemporaneous and harmless. For a walk-forward
+   replay of a past season it is a genuine leak, so `build(seasons,
+   prior_seasons=...)` restricts the rows the prior is fitted on; see
+   `outputs/backtests/01_season_replay.py`.
+
 2. `snap_jump` and the CUSUM reference window look back over prior *appearances*,
    not prior week numbers: a bye produces no snap row, and "the last two weeks he
    played" is the meaningful comparison for a role change. `fwd3` instead aligns
@@ -152,12 +163,24 @@ def fit_beta_prior(rates: pd.Series) -> tuple[float, float]:
 
 
 def empirical_bayes_share(
-    panel: pd.DataFrame, successes: str, trials: str, out: str
+    panel: pd.DataFrame, successes: str, trials: str, out: str,
+    prior_mask: pd.Series | None = None,
 ) -> pd.Series:
     """Shrink each player's season-to-date share toward a per-position beta prior.
 
     Season-to-date is cumulative through the current week inclusive -- week W's
     box score is known on the Monday the claim is made.
+
+    `prior_mask` selects the rows the beta prior is *fitted* on; the shrinkage is
+    applied to every row either way. Default (None) fits on every row in the
+    build, which is the documented judgement call at the top of this file: the
+    prior is a position-level constant, so it cannot leak a specific player's
+    future, but it is technically fitted on rows from seasons later than the row
+    it is applied to. For live weekly scoring that is contemporaneous and
+    harmless. For a walk-forward replay of a past season it is not -- a 2023
+    replay must not see a prior shaped by 2024 and 2025 -- so
+    `outputs/backtests/01_season_replay.py` passes a mask restricted to that
+    replay's training seasons. See the module docstring of that file.
     """
     group = panel.groupby(["player_id", "season"], sort=False)
     cum_successes = group[successes].cumsum()
@@ -168,11 +191,17 @@ def empirical_bayes_share(
 
     result = pd.Series(np.nan, index=panel.index, dtype=float)
     for position, idx in panel.groupby("position", sort=False).groups.items():
-        alpha, beta = fit_beta_prior(raw_rate.loc[idx])
+        fit_on = raw_rate.loc[idx]
+        if prior_mask is not None:
+            fit_on = fit_on[prior_mask.loc[idx].to_numpy()]
+        alpha, beta = fit_beta_prior(fit_on)
         result.loc[idx] = (cum_successes.loc[idx] + alpha) / (
             cum_trials.loc[idx] + alpha + beta
         )
-        print(f"  {out} prior {position}: alpha={alpha:.3f} beta={beta:.3f}")
+        print(
+            f"  {out} prior {position}: alpha={alpha:.3f} beta={beta:.3f} "
+            f"(fitted on {len(fit_on.dropna()):,} rows)"
+        )
     return result
 
 
@@ -321,7 +350,17 @@ def forward_three(panel: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     return claimed, playing
 
 
-def build(seasons) -> pd.DataFrame:
+def build(seasons, prior_seasons=None) -> pd.DataFrame:
+    """The panel over `seasons`.
+
+    `prior_seasons`, when given, restricts the seasons the empirical Bayes beta
+    priors are *fitted* on -- the one quantity in this file computed across the
+    whole build rather than per season. Default None fits them on everything,
+    which is the shipped behaviour. Every other column here is computed within a
+    single (player, season) or (season, position, week) group and is therefore
+    bit-identical whether or not later seasons are in the build; that is
+    asserted in tests/test_features.py rather than asserted in prose.
+    """
     frames = [f for f in (load_season(y) for y in seasons) if f is not None]
     if not frames:
         raise SystemExit("no seasons available -- run `make data` first")
@@ -347,9 +386,18 @@ def build(seasons) -> pd.DataFrame:
     )
     panel["snap_jump"] = panel["snap"] - prior_two
 
-    print("empirical bayes priors:")
-    panel["eb_tgt_share"] = empirical_bayes_share(panel, "targets", "team_tgt", "eb_tgt_share")
-    panel["eb_car_share"] = empirical_bayes_share(panel, "carries", "team_car", "eb_car_share")
+    if prior_seasons is None:
+        prior_mask = None
+        print("empirical bayes priors (fitted on every season in the build):")
+    else:
+        prior_mask = panel["season"].isin(list(prior_seasons))
+        print(f"empirical bayes priors (fitted on {sorted(prior_seasons)} only):")
+    panel["eb_tgt_share"] = empirical_bayes_share(
+        panel, "targets", "team_tgt", "eb_tgt_share", prior_mask
+    )
+    panel["eb_car_share"] = empirical_bayes_share(
+        panel, "carries", "team_car", "eb_car_share", prior_mask
+    )
 
     panel["kal_role"] = by_player["snap"].transform(
         lambda s: kalman_local_level(s.to_numpy())

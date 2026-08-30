@@ -221,6 +221,28 @@ this sample size is "inconclusive", and the module prints a bootstrap interval
 on the paired prompt-vs-repo difference next to the verdict so that a tie gets
 reported as a tie.
 
+## Does any of this beat the naive benchmark?
+
+On three seasons of walk-forward replay, **no**.
+`outputs/backtests/01_season_replay.py` refits the models per season on the
+seasons strictly before it (2023 on 2022, 2024 on 2022-23, 2025 on 2022-24),
+replays weeks 2-17, and scores the table's top three claims against the three
+highest scorers from the previous week. Over 42 paired weeks the repo arm loses
+by **3.35 ppg**, 95% CI [-4.59, -2.10]. It loses in all three seasons.
+
+About 61% of that margin is positional composition rather than ranking quality —
+the naive rule sorts on raw fantasy points, quarterbacks score the most raw
+fantasy points, so the naive arm is 63% quarterbacks and `fwd3` rewards it for
+that. Points above replacement exists to undo exactly that incomparability, and
+the scoring convention puts it back. Correcting for it narrows the gap and does
+not close it: with position removed the repo arm still trails by 1.18 ppg,
+95% CI [-2.23, -0.12].
+
+`outputs/diagnostics/season_replay_2022_2025.md` has the full result, the
+contamination audit behind it (two real train/test leaks found and closed), and
+what the replay does not test — no judgement layer, no roster constraints, no
+real league availability. Read it before trusting a weekly table.
+
 ## Known gaps
 
 Found, deliberately not fixed, and listed here so they are a decision rather
@@ -241,6 +263,16 @@ than a surprise. `outputs/diagnostics/` has the full findings behind each.
 - **`actions/checkout@v4` and `actions/setup-python@v5` run on Node 20**, which
   the runner now force-upgrades to Node 24 with a deprecation warning. Harmless
   today, a version bump eventually.
+- **`pts` is not a model feature, but `pts_lag1` is.** The panel row for week W
+  carries the player's week-W fantasy points, `src/features.py` states they are
+  known on the Monday claims are entered, and `src/weekly.py` prints them next to
+  every candidate — but `BASE_FEATURES` in `src/models.py` includes only the
+  *lagged* version. Week W's box score out-correlates its own lag with `fwd3` at
+  every position, and it is the entire signal the naive benchmark uses. Adding it
+  in the replay recovers about 0.5 ppg and does not close the gap, so it is a real
+  defect and not the explanation for the result above. Left unfixed here because
+  changing `BASE_FEATURES` means refitting and re-carding the shipped bundles,
+  which is a deliberate retrain rather than a backtest.
 - **The scheduled job produces the weekly table only.** `make report` and
   `make ledger` stay hand-run — see
   [What the scheduled job does, and does not do](#what-the-scheduled-job-does-and-does-not-do).
