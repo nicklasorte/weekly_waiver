@@ -15,8 +15,8 @@ src/fetch.py       download nflverse data, pin every file with a sha256
 src/features.py    build the backward-looking player-week panel
 src/models.py      fit and persist the per-position models
 src/weekly.py      score the wire pool for one season/week
-src/report.py      write the weekly markdown report               (stub)
-src/ledger.py      grade past recommendations after the fact      (stub)
+src/report.py      write the weekly markdown report
+src/ledger.py      grade past recommendations after the fact
 
 data/raw/          downloaded source files (gitignored, except MANIFEST.json)
 data/processed/    derived panel (gitignored)
@@ -96,3 +96,30 @@ on demand), then commits `outputs/` and `data/raw/MANIFEST.json`. If nflverse
 revised a prior season since the last run, the job prints a loud warning and
 keeps going — the new table is fine, but anything cached from before the
 revision is no longer comparable.
+
+## Report and ledger
+
+`make report SEASON=2025 WEEK=8` writes `outputs/reports/{season}/wk{NN}.md` —
+under 500 words, tiered into burn-the-claim / fallback / watch, every line
+carrying the usage numbers behind it and a range rather than a point estimate.
+Add `ROSTER=path` to resolve drops and run the roster check; without one the
+report still tiers the wire and leaves `DROP ???`.
+
+Claims are ordered by **points above replacement at the same position**, not by
+raw model score. The score is a within-week percentile rank pooled across
+positions, so it is not comparable between them — tiering on it puts a streaming
+quarterback ahead of a genuinely valuable receiver. Replacement is the next
+player you would actually take instead (the third-best available QB, the
+seventh-best WR), not the pool median, which at QB is a backup who will not play.
+
+Nothing in this repo places a transaction, and no proposed drop leaves the
+roster without a K or D/ST.
+
+Every recommendation is appended to `outputs/ledger/claims.csv`. `make ledger`
+grades them once three weeks of forward data exist, against two benchmarks: the
+best player who was on the wire that week (the ceiling) and whoever simply
+scored the most points the week before (the hot hand — what most managers
+actually do, and the bar worth clearing). This is the only thing here that tests
+the workflow rather than the metrics. If a season of reports does not beat the
+naive benchmark, the apparatus is decoration, and this is how that gets found
+out.

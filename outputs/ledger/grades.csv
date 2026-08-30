@@ -1,0 +1,6 @@
+season,week,tier,player,position,actual_fwd3,ceiling_pos,hot_hand_pos,hot_hand_name_pos,ceiling_all,hot_hand_all,hot_hand_name_all,beat_hot_hand_pos,beat_hot_hand_all,ceiling_pct_pos,ceiling_pct_all
+2025,8,burn,Rashee Rice,WR,11.7000,11.7000,11.7000,Rashee Rice,20.2800,20.2800,Joe Flacco,False,False,1.0000,0.5769
+2025,8,burn,Ty Johnson,RB,8.8667,19.3000,2.0500,Tank Bigsby,20.2800,20.2800,Joe Flacco,True,False,0.4594,0.4372
+2025,8,fallback,Cade Otton,TE,11.0000,18.3333,18.3333,George Kittle,20.2800,20.2800,Joe Flacco,False,False,0.6000,0.5424
+2025,8,fallback,Cam Ward,QB,9.7300,20.2800,20.2800,Joe Flacco,20.2800,20.2800,Joe Flacco,False,False,0.4798,0.4798
+2025,8,fallback,Dillon Gabriel,QB,11.5000,20.2800,20.2800,Joe Flacco,20.2800,20.2800,Joe Flacco,False,False,0.5671,0.5671
