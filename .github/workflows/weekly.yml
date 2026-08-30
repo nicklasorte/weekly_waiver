@@ -35,7 +35,15 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # `make install` builds the .venv that every make target defaults to
+        # (PY ?= .venv/bin/python), so the runner executes the pipeline through
+        # the same interpreter path a local run does. Passing PY=python to the
+        # make steps instead would skip the ~30s venv build, at the cost of the
+        # runner and a developer machine no longer running the same way -- which
+        # is the one property an unattended job needs most.
+        run: |
+          make install
+          .venv/bin/python -V
 
       - name: Unit tests
         # The whole job hangs off week resolution being right, so it is checked
@@ -54,16 +62,75 @@ jobs:
         # No SEASON/WEEK means src.weekly resolves them from games.csv. It also
         # prints a loud warning here if nflverse revised a prior season since
         # the last run -- warning only, the job continues.
-        run: make weekly SEASON=${{ inputs.season }} WEEK=${{ inputs.week }}
+        #
+        # The inputs go through env rather than being interpolated into the
+        # command, so a value with a space in it is one make argument and not a
+        # shell fragment. Blank stays blank: `make weekly SEASON=` sets an empty
+        # make variable, which the Makefile's $(if $(SEASON),...) treats as
+        # unset, so src.weekly resolves the week from games.csv.
+        env:
+          SEASON: ${{ inputs.season }}
+          WEEK: ${{ inputs.week }}
+        run: make weekly SEASON="$SEASON" WEEK="$WEEK"
 
       - name: Commit results
+        # This job may commit exactly two things:
+        #
+        #   outputs/weekly/**        the point of the run; regenerated freely
+        #   data/raw/MANIFEST.json   churns as nflverse republishes upstream
+        #
+        # Everything else is off limits, and outputs/reports/**,
+        # outputs/diagnostics/**, outputs/ledger/** and models/** especially so.
+        # Diagnostics and the ledger are permanent records -- the only things in
+        # the repo that evaluate the repo -- and models change on a deliberate
+        # retrain, never as a side effect of building a weekly table. A
+        # scheduled job that quietly rewrote any of them would be discovered
+        # weeks later, if ever.
+        #
+        # So a stray write is a hard failure, not a silent skip: a red X and a
+        # log beat a surprise.
         run: |
+          set -euo pipefail
+
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add outputs/ data/raw/MANIFEST.json
+
+          # Tracked files only. An untracked stray is never staged by the
+          # pathspecs below, so it leaves with the runner; a *tracked* file
+          # changing outside the two allowed paths means the job did something
+          # it was not asked to do.
+          stray=$(git diff --name-only HEAD -- \
+                    ':(exclude)outputs/weekly' \
+                    ':(exclude)data/raw/MANIFEST.json')
+          if [ -n "$stray" ]; then
+            echo "::error::run modified tracked files outside outputs/weekly/ and data/raw/MANIFEST.json"
+            echo "the weekly job may not write these -- refusing to commit anything:"
+            printf '%s\n' "$stray" | sed 's/^/  /'
+            echo
+            git --no-pager diff --stat HEAD
+            exit 1
+          fi
+
+          git add outputs/weekly data/raw/MANIFEST.json
+
+          # Re-checked after staging rather than trusting the pathspecs above:
+          # this is the invariant that actually matters, and it still holds if
+          # someone widens the `git add` line later.
+          escaped=$(git diff --staged --name-only -- \
+                      ':(exclude)outputs/weekly' \
+                      ':(exclude)data/raw/MANIFEST.json')
+          if [ -n "$escaped" ]; then
+            echo "::error::staged files outside the two allowed paths"
+            printf '%s\n' "$escaped" | sed 's/^/  /'
+            exit 1
+          fi
+
           if git diff --staged --quiet; then
             echo "nothing changed"
             exit 0
           fi
+
+          echo "committing:"
+          git diff --staged --name-only | sed 's/^/  /'
           git commit -m "weekly table: $(date -u +%Y-%m-%d)"
           git push
