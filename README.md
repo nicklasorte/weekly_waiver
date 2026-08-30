@@ -17,6 +17,7 @@ src/models.py      fit and persist the per-position models
 src/weekly.py      score the wire pool for one season/week
 src/report.py      write the weekly markdown report
 src/ledger.py      grade past recommendations after the fact
+src/log_claim.py   log a comparison arm's picks in one command
 
 data/raw/          downloaded source files (gitignored, except MANIFEST.json)
 data/processed/    derived panel (gitignored)
@@ -128,3 +129,35 @@ actually do, and the bar worth clearing). This is the only thing here that tests
 the workflow rather than the metrics. If a season of reports does not beat the
 naive benchmark, the apparatus is decoration, and this is how that gets found
 out.
+
+## The three-arm comparison
+
+`make ledger` also runs a controlled comparison of three ways of picking a
+claim, scored identically by what the recommended player went on to do:
+
+- **naive** — the highest-scoring available player from last week. Derived from
+  the panel, never logged by hand, so it cannot drift.
+- **prompt** — an LLM with web search and no access to this repo.
+- **repo** — the candidate table plus judgement. `make report` logs this arm
+  itself.
+
+Only one arm is ever played on a real roster; the other two are paper. The top
+three picks per arm per week are logged, which turns thirteen observations into
+thirty-nine — still not many, and the output says so.
+
+```bash
+make log-claim ARM=prompt PLAYERS="First Name, Second Name, Third Name"
+```
+
+Season and week come from the schedule, positions from the panel. The `prompt`
+arm must be produced **before** the candidate table is opened, in a separate
+session; `CONTAMINATED=1` marks a week where that order broke and drops it from
+the comparison. `docs/comparison_protocol.md` has the weekly ritual, what the
+`logged_at` timestamps can and cannot prove, and why an excluded week is worth
+more than a clean-looking one that is not.
+
+The decision rule is pre-registered in the `src/ledger.py` module docstring, so
+it cannot be revised once the numbers land. The most likely honest answer at
+this sample size is "inconclusive", and the module prints a bootstrap interval
+on the paired prompt-vs-repo difference next to the verdict so that a tie gets
+reported as a tie.

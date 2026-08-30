@@ -45,6 +45,7 @@ import argparse
 import csv
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -59,8 +60,16 @@ PANEL_PATH = ROOT / "data" / "processed" / "panel.csv"
 DEFAULT_ROSTER_PATH = ROOT / "data" / "roster.yaml"
 
 CLAIM_COLUMNS = [
-    "season", "week", "tier", "action", "player", "position", "dropped", "rationale",
+    "season", "week", "tier", "action", "player", "position", "dropped",
+    "rationale", "arm", "rank_within_arm", "logged_at", "contaminated",
 ]
+
+# Everything this file writes is the `repo` arm of the three-arm comparison by
+# construction: it is the candidate table plus the tiering rules above. The
+# other two arms are logged by hand (`make log-claim`) or derived from the panel
+# (`src.ledger.naive_picks`), so no other value is ever correct here.
+ARM = "repo"
+
 
 # Slots that must always be filled; never proposed as a drop when it is the last one.
 MANDATORY = {"K", "DST", "D/ST", "DEF"}
@@ -336,6 +345,11 @@ def roster_check(
 def build_report(
     season: int, week: int, roster: dict | None
 ) -> tuple[str, list[dict]]:
+    # Stamped once per report so every row of a run shares an instant. The
+    # ledger's ordering audit compares this against when the prompt arm was
+    # written down; see docs/comparison_protocol.md for why that check can only
+    # ever be advisory.
+    logged_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     table = load_candidates(season, week)
     panel = pd.read_csv(PANEL_PATH) if PANEL_PATH.exists() else pd.DataFrame()
     games = load_games()
@@ -375,6 +389,10 @@ def build_report(
     lines.append("")
 
     claims: list[dict] = []
+    # Rank runs across the claim tiers rather than restarting in each, because
+    # the tiers are one edge-ordered list cut into blocks: burn #2 is the third
+    # name you would take, not a second first choice.
+    rank = 0
     headings = [
         ("burn", "Burn the claim"),
         ("fallback", "Claim if tier 1 fails"),
@@ -399,6 +417,8 @@ def build_report(
                 f"- `[{label(row)}]` {action} {row['player_display_name']}"
                 f"{drop_text} — {why}."
             )
+            if key != "watch":
+                rank += 1
             claims.append(
                 {
                     "season": season,
@@ -409,6 +429,12 @@ def build_report(
                     "position": row["position"],
                     "dropped": "" if key == "watch" else drop,
                     "rationale": why,
+                    "arm": ARM,
+                    # The watch list is not a recommendation, so it carries no
+                    # rank and never enters the arm's score.
+                    "rank_within_arm": "" if key == "watch" else rank,
+                    "logged_at": logged_at,
+                    "contaminated": "",
                 }
             )
         lines.append("")
@@ -440,14 +466,31 @@ def build_report(
 
 
 def append_claims(claims: list[dict]) -> int:
-    """Append to the ledger, skipping rows already logged for this season/week/player."""
+    """Append to the ledger, skipping rows already logged for this arm and week.
+
+    The arm is part of the key. Before the comparison existed, one player per
+    season-week was one row; now the prompt arm and the repo arm naming the same
+    player in the same week is a result worth seeing -- it is the clearest
+    possible evidence that the candidate table added nothing that week -- and
+    de-duplicating it away would delete exactly that.
+    """
     CLAIMS_PATH.parent.mkdir(parents=True, exist_ok=True)
     existing = set()
     if CLAIMS_PATH.exists():
         previous = pd.read_csv(CLAIMS_PATH)
-        existing = set(zip(previous["season"], previous["week"], previous["player"]))
+        if "arm" not in previous.columns:
+            previous["arm"] = ""
+        existing = {
+            (int(s), int(w), str(a or "").strip().lower(), str(p))
+            for s, w, a, p in zip(
+                previous["season"], previous["week"], previous["arm"], previous["player"]
+            )
+        }
 
-    fresh = [c for c in claims if (c["season"], c["week"], c["player"]) not in existing]
+    fresh = [
+        c for c in claims
+        if (c["season"], c["week"], c["arm"], c["player"]) not in existing
+    ]
     write_header = not CLAIMS_PATH.exists()
     with CLAIMS_PATH.open("a", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=CLAIM_COLUMNS)
