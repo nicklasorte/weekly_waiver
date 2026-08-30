@@ -57,6 +57,13 @@ POSITIONS = ["QB", "RB", "WR", "TE"]
 # A player ranked below this in season-to-date scoring is treated as wire-available.
 ROSTER_DEPTH = {"QB": 18, "RB": 46, "WR": 60, "TE": 18}
 
+# Neutral script: plays where the possession team's pre-snap win probability
+# is in this range. Outside it, one side is already playing from ahead or
+# behind, and volume stops describing the player and starts describing the
+# scoreboard -- garbage-time targets and clock-killing carries both count the
+# same as meaningful ones unless this filter excludes them.
+NEUTRAL_WP = (0.20, 0.80)
+
 # Kalman local-level filter on the snap series.
 KALMAN_Q = 0.010
 KALMAN_R = 0.020
@@ -205,6 +212,62 @@ def upward_cusum(series: np.ndarray) -> np.ndarray:
     return out
 
 
+PBP_COLUMNS = [
+    "season", "week", "season_type", "wp", "pass_attempt", "rush_attempt",
+    "receiver_player_id", "rusher_player_id",
+]
+
+
+def load_neutral_opp(seasons) -> tuple[pd.DataFrame, list[int]]:
+    """Targets plus carries on neutral-script plays, per player-week.
+
+    Read straight from play_by_play_{year}.csv.gz -- `wp` is the possession
+    team's pre-snap win probability, so it is known before the play and
+    carries no lookahead. A season whose pbp file has not been fetched is
+    skipped and reported, not silently zeroed, so the caller can tell "no
+    neutral volume" from "not covered by this build".
+    """
+    frames = []
+    covered: list[int] = []
+    for year in seasons:
+        path = RAW_DIR / f"play_by_play_{year}.csv.gz"
+        if not path.exists():
+            print(f"{year}: play_by_play missing, neutral_opp not computed for this season")
+            continue
+
+        pbp = pd.read_csv(path, low_memory=False, usecols=PBP_COLUMNS)
+        pbp = pbp[
+            (pbp["season_type"] == "REG") & pbp["wp"].between(*NEUTRAL_WP)
+        ]
+
+        targets = (
+            pbp[(pbp["pass_attempt"] == 1) & pbp["receiver_player_id"].notna()]
+            .groupby(["week", "receiver_player_id"])
+            .size()
+        )
+        targets.index = targets.index.set_names(["week", "player_id"])
+
+        carries = (
+            pbp[(pbp["rush_attempt"] == 1) & pbp["rusher_player_id"].notna()]
+            .groupby(["week", "rusher_player_id"])
+            .size()
+        )
+        carries.index = carries.index.set_names(["week", "player_id"])
+
+        combined = pd.concat(
+            [targets.rename("t"), carries.rename("c")], axis=1
+        ).fillna(0.0)
+        combined["neutral_opp"] = combined["t"] + combined["c"]
+        combined = combined.reset_index()
+        combined["season"] = year
+        frames.append(combined[["player_id", "season", "week", "neutral_opp"]])
+        covered.append(year)
+
+    if not frames:
+        return pd.DataFrame(columns=["player_id", "season", "week", "neutral_opp"]), covered
+    return pd.concat(frames, ignore_index=True), covered
+
+
 def load_schedule() -> tuple[set[tuple[int, int, str]], dict[int, int]]:
     """(season, week, team) triples that had a regular-season game, and each
     season's final regular-season week. Used to tell a bye from a healthy scratch."""
@@ -292,6 +355,18 @@ def build(seasons) -> pd.DataFrame:
     # --- target -------------------------------------------------------------
     panel["fwd3"], panel["fwd3_played"] = forward_three(panel)
 
+    # --- neutral-script opportunity -------------------------------------
+    neutral, covered_seasons = load_neutral_opp(seasons)
+    if covered_seasons:
+        panel = panel.merge(neutral, on=["player_id", "season", "week"], how="left")
+        covered = panel["season"].isin(covered_seasons)
+        # A row in a covered season with no merge match had zero neutral-script
+        # plays that week -- a real zero. A row in an uncovered season is
+        # genuinely unknown and stays NaN rather than being reported as zero.
+        panel.loc[covered, "neutral_opp"] = panel.loc[covered, "neutral_opp"].fillna(0.0)
+    else:
+        panel["neutral_opp"] = np.nan
+
     # --- waiver availability proxy -----------------------------------------
     # Strictly *before* this week: it asks whether the player was rosterable
     # going into the week, which is what determines whether he sat on the wire.
@@ -306,7 +381,7 @@ def build(seasons) -> pd.DataFrame:
         "snap", "snap_jump", "targets", "carries", "receptions", "air_yards_share",
         "team_tgt", "team_car", "tgt_share", "carry_share", "wopr_opp",
         "eb_tgt_share", "eb_car_share", "kal_role", "cusum",
-        "pts", "pts_lag1", "fwd3", "fwd3_played",
+        "pts", "pts_lag1", "fwd3", "fwd3_played", "neutral_opp",
         "cum_before", "rank_before", "on_wire",
     ]
     return panel[keep]

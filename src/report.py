@@ -20,8 +20,11 @@ Hard rules, enforced in code rather than trusted to prose:
   single number would imply precision that does not exist.
 
 Roster is optional. Without one the report still ranks and tiers the wire, but
-leaves every DROP unresolved and skips the roster check -- see the AFTER
-discussion about roster.yaml vs the ESPN cookie route.
+leaves every DROP unresolved and skips the roster check. `data/roster.yaml` is
+read automatically when present (copy `data/roster.example.yaml` to start one);
+pass `--roster` to point at a different file, or to a `.json` roster in the
+same shape. There is no ESPN-cookie or other league-API integration here, by
+design -- a hand-maintained file needs no credentials in this repo.
 
 Run:
     python -m src.report --season 2025 --week 8
@@ -45,6 +48,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "outputs" / "reports"
 CLAIMS_PATH = ROOT / "outputs" / "ledger" / "claims.csv"
 PANEL_PATH = ROOT / "data" / "processed" / "panel.csv"
+DEFAULT_ROSTER_PATH = ROOT / "data" / "roster.yaml"
 
 CLAIM_COLUMNS = [
     "season", "week", "tier", "action", "player", "position", "dropped", "rationale",
@@ -409,10 +413,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--season", type=int, required=True)
     parser.add_argument("--week", type=int, required=True)
-    parser.add_argument("--roster", help="optional roster file (.json, or .yaml)")
+    parser.add_argument(
+        "--roster",
+        help=f"roster file (.json, or .yaml); defaults to "
+        f"{DEFAULT_ROSTER_PATH.relative_to(ROOT)} when present",
+    )
     args = parser.parse_args(argv)
 
-    roster = load_roster(args.roster)
+    roster_path = args.roster
+    if roster_path is None and DEFAULT_ROSTER_PATH.exists():
+        roster_path = str(DEFAULT_ROSTER_PATH)
+        print(f"no --roster given, using {DEFAULT_ROSTER_PATH.relative_to(ROOT)}")
+    roster = load_roster(roster_path)
     text, claims = build_report(args.season, args.week, roster)
 
     words = len(text.split())

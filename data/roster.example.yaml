@@ -1,0 +1,78 @@
+# Copy this file to data/roster.yaml and fill in your own team.
+#
+# data/roster.yaml is read automatically by `make report` / `python -m
+# src.report` when it exists -- no --roster flag needed. It is listed in
+# .gitignore on purpose: it is your personal roster and record, not a build
+# artifact, and it never leaves this machine unless you choose to commit it.
+#
+# This is the hand-maintained alternative to scraping your league host. There
+# is no ESPN-cookie or other league-API integration in this repo, by design --
+# a YAML file needs no credentials.
+#
+# What each field does:
+#   record   free text, dropped into the horizon line at the top of the report
+#             (e.g. "5-2"). Anything you type is printed as-is.
+#   players  your full roster -- starters and bench together, in any order.
+#             Every player on it is a candidate the DROP suggestions can pick
+#             from, worst value-to-date first. Leaving a player off means the
+#             report can never suggest dropping them.
+#
+# Per player:
+#   name      must match nflverse's player_display_name exactly (the name box
+#              scores use, e.g. "Puka Nacua", not a nickname or abbreviation).
+#              A name that does not match silently drops out of the roster
+#              check and the drop-value ranking -- it is not an error.
+#   position  QB, RB, WR, or TE for anyone the roster check can look up in the
+#              weekly panel. Use K and DST/D-ST for your kicker and defense --
+#              those two positions are never proposed as a drop when they are
+#              your only one at that slot, even though this repo does not
+#              otherwise score K/DST play.
+#   status    optional. Set to injured / out / ir / doubtful / questionable to
+#              flag a player in the roster check without waiting for the
+#              model to notice a role change. Omit it for a healthy player.
+#   note      optional, free text for your own reference. Not read by the
+#              report -- purely a place to leave yourself a reminder.
+#
+# The roster check also flags, straight from that week's data, anyone whose
+# team has a bye the following week or whose snap share dropped sharply --
+# no status entry needed for either of those.
+
+record: "5-2"
+
+players:
+  - name: Justin Herbert
+    position: QB
+  - name: Chase Brown
+    position: RB
+  - name: Derrick Henry
+    position: RB
+  - name: "Ja'Marr Chase"
+    position: WR
+  - name: Jaylen Waddle
+    position: WR
+  - name: DK Metcalf
+    position: WR
+  - name: Tucker Kraft
+    position: TE
+  - name: Harrison Butker
+    position: K
+  - name: Denver Broncos
+    position: DST
+  - name: Dallas Goedert
+    position: TE
+    note: bench -- TE2
+  - name: Bijan Robinson
+    position: RB
+    note: bench -- handcuff/upside
+  - name: Tez Johnson
+    position: WR
+    status: questionable
+  - name: Samaje Perine
+    position: RB
+    note: bench
+  - name: Rome Odunze
+    position: WR
+    note: bench
+  - name: Gunnar Helm
+    position: TE
+    note: bench

@@ -7,6 +7,9 @@ data/processed/*
 !data/processed/.gitkeep
 !data/raw/MANIFEST.json
 
+# Hand-maintained and personal, not a build artifact -- see roster.example.yaml.
+data/roster.yaml
+
 # Python
 __pycache__/
 *.py[cod]
