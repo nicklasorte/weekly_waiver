@@ -6,10 +6,17 @@ overwritten rather than versioned. A backtest run against the 2022 snap counts
 downloaded in March is therefore not comparable to one run against the same URL
 in October, even though nothing in this repo changed.
 
-`data/raw/MANIFEST.json` records the url, sha256, byte count and UTC fetch time
-of every file, so any downstream result can be tied to the exact bytes it was
-computed from, and a silent upstream revision shows up as a hash change instead
-of an unexplained metric drift.
+`data/raw/MANIFEST.json` records the url, sha256 and byte count of every file, so
+any downstream result can be tied to the exact bytes it was computed from, and a
+silent upstream revision shows up as a hash change instead of an unexplained
+metric drift.
+
+Fetch timestamps deliberately do not go in it. The manifest is version
+controlled, and a field that moves on every run makes every run a commit --
+which turns the weekly job's commit history from a record of change into a
+heartbeat, and hides the one week something actually moved among fifty-one weeks
+of noise. They go to `data/raw/FETCH_LOG.json` instead, which is untracked and
+answers "when did we last pull this" without costing the signal.
 
 Usage:
     python -m src.fetch                 # default seasons
@@ -36,6 +43,13 @@ GAMES_URL = "https://raw.githubusercontent.com/nflverse/nfldata/master/data/game
 
 RAW_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
 MANIFEST_PATH = RAW_DIR / "MANIFEST.json"
+# Untracked sibling of the manifest: everything that moves on every run.
+FETCH_LOG_PATH = RAW_DIR / "FETCH_LOG.json"
+
+# Per-file fields carried in memory but stripped before the manifest is written,
+# because they change whether or not the bytes did. Kept out here rather than
+# never recorded, so FETCH_LOG.json can still show them.
+UNTRACKED_FIELDS = ("fetched_utc",)
 
 DEFAULT_SEASONS = range(2022, 2027)
 
@@ -70,13 +84,23 @@ def sha256_of(path: Path) -> str:
 
 def load_manifest() -> dict:
     if not MANIFEST_PATH.exists():
-        return {"generated_utc": None, "files": {}}
+        return {"files": {}}
     try:
         manifest = json.loads(MANIFEST_PATH.read_text())
     except json.JSONDecodeError:
         print(f"  warning: {MANIFEST_PATH.name} is unreadable, starting a fresh one")
-        return {"generated_utc": None, "files": {}}
+        return {"files": {}}
     manifest.setdefault("files", {})
+    # Fold in the fetch times from the untracked log so a re-write does not lose
+    # them. Absent (fresh clone, cleaned tree) they simply stay unknown.
+    if FETCH_LOG_PATH.exists():
+        try:
+            fetched = json.loads(FETCH_LOG_PATH.read_text()).get("files", {})
+        except json.JSONDecodeError:
+            fetched = {}
+        for name, stamp in fetched.items():
+            if name in manifest["files"] and stamp:
+                manifest["files"][name]["fetched_utc"] = stamp
     return manifest
 
 
@@ -98,9 +122,36 @@ def data_revision(manifest: dict | None = None) -> str:
 
 
 def write_manifest(manifest: dict) -> None:
-    manifest["generated_utc"] = datetime.now(timezone.utc).isoformat()
+    """Write the tracked manifest, and the untracked fetch log beside it.
+
+    The manifest gets url, sha256 and bytes -- the reproducibility guarantee, and
+    nothing that moves on its own. Identical bytes therefore produce an identical
+    file, which is what lets a commit from the weekly job mean that something
+    actually changed.
+    """
     manifest["files"] = dict(sorted(manifest["files"].items()))
-    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2) + "\n")
+    tracked = {
+        "files": {
+            name: {k: v for k, v in record.items() if k not in UNTRACKED_FIELDS}
+            for name, record in manifest["files"].items()
+        }
+    }
+    MANIFEST_PATH.write_text(json.dumps(tracked, indent=2) + "\n")
+
+    FETCH_LOG_PATH.write_text(
+        json.dumps(
+            {
+                "note": "untracked; timestamps only. MANIFEST.json holds the digests.",
+                "generated_utc": datetime.now(timezone.utc).isoformat(),
+                "files": {
+                    name: record.get("fetched_utc")
+                    for name, record in manifest["files"].items()
+                },
+            },
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def download(url: str, dest: Path) -> None:

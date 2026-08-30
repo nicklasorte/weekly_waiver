@@ -23,6 +23,7 @@ Run:
 from __future__ import annotations
 
 import json
+import platform
 import sys
 from datetime import date
 from pathlib import Path
@@ -30,6 +31,8 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+import scipy
+import sklearn
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import r2_score
 
@@ -69,6 +72,33 @@ MODEL_KWARGS = dict(max_depth=3, max_iter=250, learning_rate=0.05, random_state=
 
 TARGET = "fwd3"
 CONFORMAL_LEVEL = 0.80
+
+# Recorded inside every bundle at fit time, so a persisted estimator carries the
+# environment it was fit under the same way it already carries its data revision.
+FIT_VERSION_KEYS = ("python", "scikit-learn", "numpy", "scipy", "pandas", "joblib")
+
+# Of those, the ones a load refuses to proceed past when they differ. These four
+# sit between the stored trees and the printed number: scikit-learn owns the
+# predict path, numpy and scipy own the arithmetic under it, and pandas builds
+# the feature frame that goes in.
+#
+# `python` and `joblib` are recorded but not asserted. CPython's patch level is
+# not pinnable from requirements.txt at all (the runner picks it), and joblib
+# only serialises -- if the bundle unpickled at all, it did its job. Both are in
+# the bundle so a forensic question later has an answer.
+ASSERTED_VERSION_KEYS = ("scikit-learn", "numpy", "scipy", "pandas")
+
+
+def library_versions() -> dict[str, str]:
+    """Versions of everything that can change a number, plus the interpreter."""
+    return {
+        "python": platform.python_version(),
+        "scikit-learn": sklearn.__version__,
+        "numpy": np.__version__,
+        "scipy": scipy.__version__,
+        "pandas": pd.__version__,
+        "joblib": joblib.__version__,
+    }
 
 
 def feature_columns(panel: pd.DataFrame) -> list[str]:
@@ -187,6 +217,7 @@ def train_all() -> dict:
             "n_train": len(frame),
             "trained_on": date.today().isoformat(),
             "data_revision": revision,
+            "fit_versions": library_versions(),
             "model_kwargs": MODEL_KWARGS,
         }
         joblib.dump(bundle, MODEL_DIR / f"{position}.joblib")
@@ -211,6 +242,13 @@ def write_model_card(
 ) -> None:
     manifest_path = ROOT / "data" / "raw" / "MANIFEST.json"
     n_files = len(json.loads(manifest_path.read_text()).get("files", {})) if manifest_path.exists() else 0
+    versions = summary[POSITIONS[0]]["fit_versions"]
+    asserted = ", ".join(
+        f"`{key} {versions[key]}`" for key in FIT_VERSION_KEYS if key in ASSERTED_VERSION_KEYS
+    )
+    recorded_only = ", ".join(
+        f"`{key} {versions[key]}`" for key in FIT_VERSION_KEYS if key not in ASSERTED_VERSION_KEYS
+    )
 
     lines = [
         "# Model card",
@@ -221,6 +259,10 @@ def write_model_card(
         f"- **Data revision** `{revision}`",
         f"  (sha256 over the {n_files} (filename, sha256) pairs in `data/raw/MANIFEST.json`;",
         "  changes when nflverse revises history, not when identical bytes are re-fetched)",
+        f"- **Fitted under** {asserted}",
+        f"  (also recorded, not asserted: {recorded_only})",
+        "  `src/models.py` refuses to load a bundle whose asserted versions do not match",
+        "  the running ones — see `requirements.txt` for why the pins are exact",
         f"- **Training window** {seasons[0]}-{seasons[-1]}, regular season weeks "
         f"{WEEKS[0]}-{WEEKS[1]}",
         "- **Universe** players on the waiver wire (season-to-date scoring rank below",
@@ -308,19 +350,72 @@ def write_model_card(
         "## Files",
         "",
         "`models/{position}.joblib` — a dict holding the fitted estimator, the feature list",
-        "it expects, the conformal half-width and coverage, and the data revision above.",
-        "The half-width travels with the model so a score can never be served without the",
-        "range that belongs to it.",
+        "it expects, the conformal half-width and coverage, the data revision above, and",
+        "the library versions it was fit under. The half-width travels with the model so a",
+        "score can never be served without the range that belongs to it; the versions",
+        "travel with it so a score can never be served through a library that did not",
+        "produce it.",
         "",
     ]
     MODEL_CARD.write_text("\n".join(lines))
+
+
+def check_fit_versions(position: str, bundle: dict, running: dict | None = None) -> None:
+    """Refuse to serve a bundle fitted under different library versions.
+
+    Hard failure, not a warning. A version skew here does not announce itself:
+    the estimator unpickles, `predict` returns floats, and the weekly table
+    looks exactly as it always does -- only the numbers are from a library the
+    trees were never fit under. A wrong number that is trusted is worse than an
+    error, so this exits rather than printing something a scheduled job would
+    bury in a log nobody reads.
+    """
+    running = running or library_versions()
+    recorded = bundle.get("fit_versions")
+    if not recorded:
+        raise SystemExit(
+            f"{position}.joblib records no fit versions -- it predates the check "
+            "and cannot be verified against the pinned set in requirements.txt.\n"
+            "  run `make models` to refit and stamp it."
+        )
+
+    drift = [
+        (key, recorded.get(key), running[key])
+        for key in ASSERTED_VERSION_KEYS
+        if recorded.get(key) != running[key]
+    ]
+    if not drift:
+        return
+
+    lines = [
+        f"{position}.joblib was fitted under different library versions than "
+        "the ones running now.",
+        "",
+        "  library         fitted under    running now",
+    ]
+    lines += [
+        f"  {key:<14}  {fitted or '(unrecorded)':<14}  {live}"
+        for key, fitted, live in drift
+    ]
+    lines += [
+        "",
+        "Refusing to score: unpickling a fitted estimator through a version it",
+        "was not fit under produces numbers, not errors, and a weekly table you",
+        "have no reason to distrust is the worst way for this to fail.",
+        "",
+        "  to fix: `make install` to get the pinned set in requirements.txt, or",
+        "          `make models` to refit the bundles under what is installed.",
+    ]
+    raise SystemExit("\n".join(lines))
 
 
 def load_bundle(position: str) -> dict:
     path = MODEL_DIR / f"{position}.joblib"
     if not path.exists():
         raise SystemExit(f"{path} not found -- run `make models` first")
-    return joblib.load(path)
+    bundle = joblib.load(path)
+    check_fit_versions(position, bundle)
+    return bundle
 
 
 def main(argv: list[str] | None = None) -> int:

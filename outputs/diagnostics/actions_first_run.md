@@ -382,3 +382,208 @@ Found and **deliberately left alone**:
 - **`actions/checkout@v4` and `actions/setup-python@v5` are on Node 20**, which
   the runner now force-upgrades to Node 24 with a deprecation warning. Harmless
   today, a version bump eventually.
+
+## 4. Version pinning and the noise commit — fixed
+
+Both items from §3.4 and §3.5 are now closed. §4.1–4.3 cover the model/runtime
+coupling, §4.4 the weekly noise commit, §4.5 what moved out of this file and
+into the README.
+
+### 4.1 The pin: every direct dependency, not just the numeric stack
+
+`requirements.txt` went from six floors to six exact pins:
+
+```
+ pandas>=2.0            ->  pandas==3.0.5
+ numpy>=1.24            ->  numpy==2.5.2
+ scikit-learn>=1.3      ->  scikit-learn==1.9.0
+ scipy>=1.10            ->  scipy==1.18.1
+ joblib                 ->  joblib==1.5.3
+ pyyaml>=6.0            ->  pyyaml==6.0.3
+```
+
+Everything, not only the numeric stack. This is an application with one
+execution path, not a library other code resolves against, so a loose bound buys
+nothing: no downstream consumer ever has to reconcile these ranges with its own.
+And `pyyaml` is not decoration — it parses `data/roster.yaml`, which decides
+which drops a report proposes, so its version reaches the output too. Drawing
+the line at "numerics" would have left a parser free to move under the one file
+a human hand-maintains.
+
+Transitive dependencies (`narwhals`, `threadpoolctl`, `six`, `python-dateutil`)
+are deliberately **not** pinned. Pinning those is a lockfile, with a lockfile's
+maintenance, and the thing that actually protects the numbers is §4.2 rather
+than the transitive closure of a requirements file. Worth noting that the exact
+pins above resolve those four to the same versions the fitting session recorded,
+so the practical gap today is zero.
+
+### 4.2 The assertion: bundles carry their fit versions, and a mismatch exits
+
+Each `models/*.joblib` now carries a `fit_versions` dict alongside the data
+revision it already had:
+
+```json
+{"python": "3.12.3", "scikit-learn": "1.9.0", "numpy": "2.5.2",
+ "scipy": "1.18.1", "pandas": "3.0.5", "joblib": "1.5.3"}
+```
+
+`src/models.py:check_fit_versions` runs inside `load_bundle`, which is the single
+chokepoint every score goes through (`src/weekly.py` is the only caller). Four of
+the six are asserted — `scikit-learn`, `numpy`, `scipy`, `pandas`. Those sit
+between the stored trees and the printed number: scikit-learn owns the predict
+path, numpy and scipy own the arithmetic under it, pandas builds the feature
+frame that goes in.
+
+`python` and `joblib` are recorded but **not** asserted, and the distinction is
+the point rather than a hedge. The runner picks its own CPython patch level from
+the tool cache; asserting a version nothing can pin would fail every Tuesday for
+a non-difference (§4.5 carries this forward as a known gap rather than losing
+it). `joblib` only serialises — if the bundle unpickled at all, it did its job.
+Both are in the bundle so a forensic question later has an answer.
+
+A mismatch **exits**; it does not warn. `make weekly` against a bundle claiming
+scikit-learn 1.10.0 — the exact scenario §3.5 flagged as latent — now:
+
+```
+$ make weekly SEASON=2025 WEEK=8
+.venv/bin/python -m src.weekly --season 2025 --week 8
+WR.joblib was fitted under different library versions than the ones running now.
+
+  library         fitted under    running now
+  scikit-learn    1.10.0          1.9.0
+
+Refusing to score: unpickling a fitted estimator through a version it
+was not fit under produces numbers, not errors, and a weekly table you
+have no reason to distrust is the worst way for this to fail.
+
+  to fix: `make install` to get the pinned set in requirements.txt, or
+          `make models` to refit the bundles under what is installed.
+make: *** [Makefile:64: weekly] Error 1
+```
+
+That is a red X on the Actions run, which is the whole objective: the failure
+mode being closed here is one where the job stays green and the numbers move.
+A bundle with no `fit_versions` at all is refused on the same grounds — it
+cannot be verified, so it is not assumed fine.
+
+### 4.3 The committed bundles were stamped, not refitted
+
+The four bundles predate the stamp, so they had to acquire one. Refitting would
+have been the tidier-looking option and the wrong one: the panel has moved since
+these were fit (`games.csv` alone was republished twice in the last two hours,
+see §3.4), so `make models` would have produced *different* models and quietly
+changed the shipped table under cover of a version-pinning change. Instead each
+bundle was loaded and re-dumped with `fit_versions` added and nothing else
+touched.
+
+Provenance of each version, since a backfilled stamp is only as good as its
+source:
+
+| library | where the value comes from | strength |
+| --- | --- | --- |
+| `scikit-learn 1.9.0` | `_sklearn_version` inside the pickle itself | self-attested by the artifact |
+| `numpy 2.5.2`, `pandas 3.0.5`, `scipy 1.18.1`, `joblib 1.5.3` | the pip install log of the session that fit them (`dryrun_2025wk08.md`, line 66) | recorded at the time, not reconstructed |
+| `python 3.12.3` | same session's bootstrap interpreter, and this container's | recorded at the time |
+
+Corroborated three ways: the models' `trained_on` is `2026-08-30`, the same day
+as that session; the exact pins in §4.1 resolve to precisely that set today; and
+those bundles load under it with no `InconsistentVersionWarning` (checked with
+that warning promoted to an error). This is stronger than a guess and weaker
+than a stamp written by the fitting code itself — the next `make models` produces
+the latter, and every bundle after this one is self-recorded.
+
+The re-dump was verified not to move anything:
+
+```
+QB: stamped, 232,352 -> 232,473 bytes, predictions bit-identical over 64 probes
+RB: stamped, 249,648 -> 249,831 bytes, predictions bit-identical over 64 probes
+TE: stamped, 241,328 -> 241,511 bytes, predictions bit-identical over 64 probes
+WR: stamped, 249,456 -> 249,639 bytes, predictions bit-identical over 64 probes
+```
+
+The ~120-180 byte growth is the JSON-ish payload of the new key. `predict` was
+compared before and after on 64 fixed probe rows and matched exactly, and the
+conformal half-width, coverage, R², feature list, `n_train` and `data_revision`
+all round-tripped unchanged.
+
+**Confirmation the committed bundles still load clean under the pinned set** —
+the whole chain was run end to end in a fresh `.venv` built from the new
+`requirements.txt`:
+
+| step | result |
+| --- | --- |
+| `make install` | pinned set installs, no resolver conflict |
+| `make test` | 62 tests OK (was 48; §4.4 adds the other 14) |
+| `make data` | 13 files, all re-downloaded |
+| `make panel` | 22,615 rows |
+| `make weekly SEASON=2025 WEEK=8` | 134 wire candidates, no version error |
+
+The regenerated table hashes to `7710fbb6…56e322` — **the same digest as the
+committed blob and as both prior runs in §3.3**. Pinning the environment and
+stamping the bundles changed no number.
+
+One incidental finding from that run: `games.csv` had been republished *again*
+(`0d581221…` → `edc7d01f…`, same 2,177,172 bytes) between the runner's fetch at
+22:23Z and this one. The table came out byte-identical anyway. That churn was
+deliberately **not** committed here — the data revision recorded on `main` should
+be set by a pipeline run on `main`, not by a verification run in a scratch
+container, so `MANIFEST.json` in this change carries only the timestamp removal
+below and keeps the digests the runner recorded.
+
+### 4.4 The noise commit: timestamps are out of version control
+
+Three fields moved every run and made the "nothing changed" exit dead code. All
+three are gone from tracked files:
+
+| file | removed | kept |
+| --- | --- | --- |
+| `data/raw/MANIFEST.json` | `generated_utc`, 13× `fetched_utc` | `url`, `sha256`, `bytes` |
+| `outputs/weekly/LAST_MANIFEST.json` | `recorded` | `revision`, per-file `sha256` |
+
+The digests stay — they are the reproducibility guarantee and the entire point of
+the manifest. `data_revision()` never hashed the timestamps in the first place,
+so the revision fingerprint is unchanged by this: `ebfa356a…` before and after.
+
+The fetch times were useful enough to keep somewhere, so they go to
+`data/raw/FETCH_LOG.json`, untracked (it falls under the existing `data/raw/*`
+ignore; `.gitignore` now says why explicitly). `load_manifest` folds them back in
+when the log is present, so `make data` does not forget when it last pulled
+anything, and works fine when it is absent — a fresh clone simply has no fetch
+history, which is true.
+
+`LAST_MANIFEST.json`'s `recorded` date was not given a sidecar. That file's only
+job is to say whether anything changed since last time; when something did, the
+commit dates it, and when nothing did, there is nothing to date.
+
+Placement mattered for one of these. An untracked sidecar under
+`outputs/weekly/` would have been staged anyway — the commit step runs
+`git add outputs/weekly`, which picks up untracked files in the directory. The
+fetch log lives under `data/raw/`, where the allowlist names a single file.
+
+Fourteen tests cover it (`tests/test_fetch.py`, `tests/test_models.py`). The one
+that matters is byte-level rather than field-by-field: write the same manifest
+twice with different clocks and the tracked file must be identical, while a
+single changed digest must still move it. That is the actual property the commit
+guard depends on, and asserting the absence of specific field names would pass
+while some future field quietly reintroduced the problem.
+
+What this buys, stated plainly: a commit from this workflow now means something
+moved upstream or in the table. A Tuesday with no commit means the wire was
+quiet. The green check on the Actions run is what says the job ran — not the
+commit, which is now evidence of change rather than evidence of life.
+
+### 4.5 The deferred items are in the README now, not only here
+
+§3.5 listed four things found and left alone. A diagnostics file is a record of a
+session, not a place anyone looks before a Monday, so they are now a **Known
+gaps** section in `README.md` — CPython patch level unpinned, `git push` without
+retry or rebase, checkout/setup-python on Node 20, and the scheduled job
+producing the table only.
+
+That last one got more than a bullet. `README.md` gained a **What the scheduled
+job does, and does not do** section with the runs / may-commit / never-runs
+table, the `make report` command spelled out as a thing a human types, and the
+reason it is deliberate rather than missing: automating the report would mean
+handing the scheduled job write access to the ledger that grades it. It also
+states the new expected outcome — no commit on a quiet week is correct, and the
+Actions tab is where "it ran" is confirmed.

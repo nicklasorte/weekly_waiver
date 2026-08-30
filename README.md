@@ -48,6 +48,27 @@ Every target takes `PY=` and `SEASONS=` overrides, e.g.
 Seasons that have not started yet report `not published yet` and are skipped
 rather than failing the run, so the same command works before Week 1.
 
+### Pinned dependencies
+
+`requirements.txt` pins every direct dependency to an exact version, and each
+`models/*.joblib` records the versions it was fitted under. `src/models.py`
+compares the two on load and **exits** if `scikit-learn`, `numpy`, `scipy` or
+`pandas` differ.
+
+This is deliberately a hard failure. The bundles are fitted estimators committed
+to the repo, and the scheduled job unpickles them without ever refitting — so a
+newer scikit-learn does not crash, it scores. The result is a weekly table of
+slightly different numbers with nothing to signal that anything moved, which is
+worse than an error, because there is no reason to distrust it.
+
+To move a version: change the pin, `make install`, then `make models` to refit
+under it. Bumping a pin without refitting is exactly what the check stops. The
+model card records the resulting versions alongside the data revision.
+
+`python` and `joblib` are recorded in each bundle but not asserted — the CI
+runner picks its own CPython patch level (see [Known gaps](#known-gaps)), and
+joblib only serialises.
+
 ## Data sources
 
 All from [nflverse](https://github.com/nflverse):
@@ -61,10 +82,17 @@ All from [nflverse](https://github.com/nflverse):
 
 ## MANIFEST.json
 
-Written by `src/fetch.py` on every run. Per file: source url, sha256, byte
-count and UTC fetch timestamp. If a re-fetch changes a hash for a season that is
-already complete, upstream revised history and previously computed results are
-no longer comparable — `fetch.py` says so on the spot.
+Written by `src/fetch.py` on every run. Per file: source url, sha256 and byte
+count. If a re-fetch changes a hash for a season that is already complete,
+upstream revised history and previously computed results are no longer
+comparable — `fetch.py` says so on the spot.
+
+Fetch timestamps are **not** in it. Identical bytes must produce an identical
+manifest, or the scheduled job's "nothing changed, don't commit" exit never
+fires and the weekly commit history becomes a heartbeat rather than a record of
+change. They go to `data/raw/FETCH_LOG.json` instead, which is untracked.
+`outputs/weekly/LAST_MANIFEST.json` holds digests only for the same reason: when
+the data changed, git records when; when it did not, there is nothing to record.
 
 ## The panel
 
@@ -97,11 +125,42 @@ This does **not** filter by availability in any particular league. It narrows a
 few thousand player-weeks to a few dozen names; confirming who is actually free
 is a separate manual step.
 
-`.github/workflows/weekly.yml` runs the whole chain Tuesdays at 06:00 UTC (and
-on demand), then commits `outputs/` and `data/raw/MANIFEST.json`. If nflverse
-revised a prior season since the last run, the job prints a loud warning and
-keeps going — the new table is fine, but anything cached from before the
-revision is no longer comparable.
+## What the scheduled job does, and does not do
+
+`.github/workflows/weekly.yml` runs Tuesdays at 06:00 UTC, and on demand via
+**workflow_dispatch**. It produces **the weekly table only**:
+
+| | |
+| --- | --- |
+| runs | `make install`, `make test`, `make data`, `make panel`, `make weekly` |
+| may commit | `outputs/weekly/**` and `data/raw/MANIFEST.json`, nothing else |
+| never runs | `make models`, `make report`, `make ledger` |
+
+**`make report` and `make ledger` are hand-run.** Nothing arrives on its own on a
+Monday. The table is waiting for you in `outputs/weekly/{season}/wk{NN}.csv`, and
+the report is a command you type:
+
+```bash
+git pull
+make report SEASON=2025 WEEK=8      # then make ledger, once three weeks have passed
+```
+
+This is deliberate, not a gap. The commit step is an allowlist that fails the job
+if a run touches anything outside those two paths, and `outputs/reports/`,
+`outputs/ledger/`, `outputs/diagnostics/` and `models/` are all outside it —
+they are permanent records and deliberate retrains, and a scheduled job that
+quietly rewrote one would be discovered weeks later, if ever. Automating the
+report would mean handing the job write access to the ledger that grades it.
+
+**No commit is the expected outcome on a quiet week.** The manifest and the
+weekly table both carry digests and no timestamps, so a run whose inputs and
+output are unchanged stages nothing and exits without pushing. A Tuesday with no
+commit means the wire was quiet, not that the job is broken — check the Actions
+tab for a green run, which is the signal that it worked.
+
+If nflverse revised a prior season since the last run, the job prints a loud
+warning and keeps going — the new table is fine, but anything cached from before
+the revision is no longer comparable.
 
 ## Report and ledger
 
@@ -161,3 +220,29 @@ it cannot be revised once the numbers land. The most likely honest answer at
 this sample size is "inconclusive", and the module prints a bootstrap interval
 on the paired prompt-vs-repo difference next to the verdict so that a tie gets
 reported as a tie.
+
+## Known gaps
+
+Found, deliberately not fixed, and listed here so they are a decision rather
+than a surprise. `outputs/diagnostics/` has the full findings behind each.
+
+- **The CPython patch level is not pinned.** `requirements.txt` pins the
+  libraries; nothing pins the interpreter. The workflow asks `setup-python` for
+  `3.12` and gets whatever patch the runner's tool cache holds (3.12.14 at last
+  check, against 3.12.3 locally). Each bundle records the patch it was fitted
+  under, but the load check does not assert it — a runner cannot honour a pin it
+  has no way to satisfy. Same-minor CPython is not a plausible source of numeric
+  drift here; it is named because it is the one version in the chain nothing
+  controls.
+- **`git push` in the workflow has no retry or rebase.** `concurrency` stops the
+  job racing itself but not a human pushing to `main` during its ~45-second
+  window. It fails loudly, which is the right direction, but it fails *after*
+  doing all the work — re-running is the whole pipeline again.
+- **`actions/checkout@v4` and `actions/setup-python@v5` run on Node 20**, which
+  the runner now force-upgrades to Node 24 with a deprecation warning. Harmless
+  today, a version bump eventually.
+- **The scheduled job produces the weekly table only.** `make report` and
+  `make ledger` stay hand-run — see
+  [What the scheduled job does, and does not do](#what-the-scheduled-job-does-and-does-not-do).
+  Listed here as well because waiting for a report that is never coming is the
+  most expensive way to learn it.
