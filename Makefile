@@ -23,7 +23,8 @@ help:
 	@echo "make weekly    score the wire pool: make weekly SEASON=2025 WEEK=8"
 	@echo "               omit SEASON/WEEK to resolve them from the schedule"
 	@echo "make report    write the weekly markdown report: make report SEASON=2025 WEEK=8"
-	@echo "               add ROSTER=path to resolve drops and the roster check"
+	@echo "               reads data/roster.yaml automatically when present"
+	@echo "               ROSTER=path overrides it; copy data/roster.example.yaml to start one"
 	@echo "make ledger    grade logged claims against the naive benchmarks"
 	@echo "make test      run unit tests"
 

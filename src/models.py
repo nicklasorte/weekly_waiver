@@ -60,9 +60,9 @@ BASE_FEATURES = [
     "pts_lag1",
 ]
 
-# Included when the panel carries them. Neutral-script opportunity (early-down,
-# one-score-game usage) is not built yet; naming it here means a later panel
-# picks it up without touching this file.
+# Included when the panel carries them. neutral_opp can be NaN for a season
+# whose play-by-play file was not fetched; HistGradientBoostingRegressor
+# handles missing values natively, so that is not a reason to exclude it.
 OPTIONAL_FEATURES = ["neutral_opp"]
 
 MODEL_KWARGS = dict(max_depth=3, max_iter=250, learning_rate=0.05, random_state=0)
@@ -242,11 +242,15 @@ def write_model_card(
         "",
     ]
     lines += [f"{i}. `{f}`" for i, f in enumerate(features, 1)]
+    neutral_line = (
+        "Neutral-script opportunity (`neutral_opp`) is in this fit."
+        if "neutral_opp" in features
+        else "Neutral-script opportunity is named in `src/models.py` but not built into "
+        "the panel, so it is absent from this fit."
+    )
     lines += [
         "",
-        "All strictly backward-looking as of the Monday claims are entered. Neutral-script",
-        "opportunity is named in `src/models.py` but not yet built into the panel, so it is",
-        "absent from this fit.",
+        f"All strictly backward-looking as of the Monday claims are entered. {neutral_line}",
         "",
         "## Per-position results",
         "",
