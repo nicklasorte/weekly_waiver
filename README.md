@@ -12,7 +12,7 @@ itself is not.
 
 ```
 src/fetch.py       download nflverse data, pin every file with a sha256
-src/features.py    build the backward-looking player-week panel   (stub)
+src/features.py    build the backward-looking player-week panel
 src/models.py      fit and persist the per-position models        (stub)
 src/weekly.py      score the wire pool for one season/week        (stub)
 src/report.py      write the weekly markdown report               (stub)
@@ -26,9 +26,14 @@ outputs/           backtests, weekly tables, reports, claim ledger
 ## Setup
 
 ```bash
+python3.12 -m venv .venv && . .venv/bin/activate
 make install       # pip install -r requirements.txt
 make data          # download 2022-2026 into data/raw/
+make panel         # build data/processed/panel.csv
 ```
+
+Every target takes `PY=` and `SEASONS=` overrides, e.g.
+`make panel SEASONS="2022 2023 2024 2025"`.
 
 `make data` skips files already on disk; `FORCE=1 make data` re-downloads them.
 Seasons that have not started yet report `not published yet` and are skipped
@@ -51,3 +56,17 @@ Written by `src/fetch.py` on every run. Per file: source url, sha256, byte
 count and UTC fetch timestamp. If a re-fetch changes a hash for a season that is
 already complete, upstream revised history and previously computed results are
 no longer comparable — `fetch.py` says so on the spot.
+
+## The panel
+
+`src/features.py` joins weekly stats to snap counts and writes one row per
+player-week to `data/processed/panel.csv`. Scoring is half PPR with full PPR for
+tight ends.
+
+Everything on a row for week W is computable on the Monday after week W's games
+— the morning claims are entered. Usage features use weeks 1..W inclusive, the
+`on_wire` availability proxy uses weeks 1..W-1 (it asks whether the player was
+rosterable going *into* the week), and the only forward-looking column is `fwd3`,
+the training target. The module docstring states this, along with the two
+judgement calls worth arguing about: where the empirical Bayes priors are fit,
+and how byes are handled at both ends of the window.
