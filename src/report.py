@@ -18,6 +18,14 @@ Hard rules, enforced in code rather than trusted to prose:
 - Projections are ranges from the conformal intervals. Never a point estimate:
   these models resolve about a third of the variance in wire outcomes, and a
   single number would imply precision that does not exist.
+- A bound is only printed as a number where it is that player's number. The
+  top of the interval is a clipped quantile, so once an upper bound clears the
+  clip it stops being his and becomes the position's 99th-percentile outcome,
+  shared with everyone else who cleared it -- and scoring well is what makes a
+  player clear it, so this lands hardest on exactly the names being
+  recommended. Those print as `2.8+ pts/wk (upside unbounded)`, with the
+  standing rules saying once what the `+` means, rather than as a figure that
+  reads precise and is not.
 
 Roster is optional. Without one the report still ranks and tiers the wire, but
 leaves every DROP unresolved and skips the roster check. `data/roster.yaml` is
@@ -42,7 +50,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.weekly import WEEKLY_DIR, load_games
+from src.weekly import PROJECTION_CLIP, WEEKLY_DIR, load_games
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "outputs" / "reports"
@@ -161,6 +169,39 @@ def label(row: pd.Series) -> str:
     if row["score"] >= STARTER_SCORE:
         return "STARTER"
     return "RENTAL"
+
+
+def ceiling_saturated(row: pd.Series) -> bool:
+    """True when the top of this player's interval hit the projection clip.
+
+    `weekly.score_week` maps rank to points through the position's empirical
+    fwd3 quantile function, with the input clipped to PROJECTION_CLIP. Every
+    `score_hi` at or above the upper clip therefore lands on the same
+    99th-percentile outcome for the position. That number is real -- it is what
+    the 99th-percentile wire player at the position went on to average -- but it
+    is not *this* player's ceiling, and printing it to one decimal implies it
+    is. In 2025 Week 8 it collapsed six of fifteen QB candidates onto an
+    identical 25.8, the top of the recommended tier included.
+
+    Falls back to False when `score_hi` is absent, so a table written by an
+    older version of the pipeline still renders.
+    """
+    score_hi = row.get("score_hi")
+    if score_hi is None or pd.isna(score_hi):
+        return False
+    return float(score_hi) >= PROJECTION_CLIP[1]
+
+
+def projection(row: pd.Series) -> str:
+    """The interval as text: a range, or a floor plus an honest non-answer.
+
+    The lower bound is unaffected by any of this -- a saturated ceiling says
+    nothing about the floor -- so it is still printed as a number.
+    """
+    low = f"{row['proj_pts_lo']:.1f}"
+    if ceiling_saturated(row):
+        return f"{low}+ pts/wk (upside unbounded)"
+    return f"{low}–{row['proj_pts_hi']:.1f} pts/wk"
 
 
 def evidence(row: pd.Series, pool: pd.DataFrame) -> str:
@@ -319,16 +360,17 @@ def build_report(
     else:
         lines += ["- Nothing flagged.", ""]
 
+    saturated = False  # any printed line whose ceiling hit the clip
     lines += ["## Top of the wire", ""]
     for position in ["RB", "WR", "TE", "QB"]:
         rows = table[table["position"] == position].head(2)
         if rows.empty:
             continue
         for _, row in rows.iterrows():
+            saturated |= ceiling_saturated(row)
             lines.append(
                 f"- **{row['player_display_name']}** ({position}, {row['team']}) — "
-                f"{evidence(row, table)}; {row['proj_pts_lo']:.1f}–"
-                f"{row['proj_pts_hi']:.1f} pts/wk"
+                f"{evidence(row, table)}; {projection(row)}"
             )
     lines.append("")
 
@@ -349,10 +391,8 @@ def build_report(
             # alternatives, not a shopping list. If tier 1 fails, the player it
             # would have cost you is still on your roster.
             drop = drops[i] if i < len(drops) else "???"
-            why = (
-                f"{evidence(row, table)}; {row['proj_pts_lo']:.1f}–"
-                f"{row['proj_pts_hi']:.1f} pts/wk"
-            )
+            saturated |= ceiling_saturated(row)
+            why = f"{evidence(row, table)}; {projection(row)}"
             action = "WATCH" if key == "watch" else "ADD"
             drop_text = "" if key == "watch" else f" / DROP {drop}"
             lines.append(
@@ -383,6 +423,14 @@ def build_report(
         "- Claims are ordered by points above replacement at the same position, "
         "not by raw model score, which is not comparable across positions.",
     ]
+    if saturated:
+        lines.append(
+            "- `0.8+ pts/wk (upside unbounded)` means the floor is that "
+            "player's but the ceiling is not: his interval ran past what this "
+            "method resolves, where every candidate would print the same "
+            "99th-percentile number for the position. Upside not bounded by this "
+            "method is what is known; a figure there would be invented."
+        )
     if roster is None:
         lines.append("- `DROP ???` — wire up a roster to resolve the other half.")
     else:
