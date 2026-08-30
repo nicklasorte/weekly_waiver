@@ -28,7 +28,9 @@ Two documented judgement calls, both stated here rather than buried:
    claiming someone who then sits is worth nothing, and dropping those weeks
    would quietly grade every pickup on his good games only. Team byes are
    excluded from the average rather than scored 0, since a bye says nothing
-   about the player.
+   about the player. `fwd3_played`, the games-played-only alternative, is kept
+   alongside it because the choice between them moves measured input importance
+   materially -- see outputs/backtests/results_input_importance.txt.
 
 Usage:
     python -m src.features                 # default seasons
@@ -215,28 +217,39 @@ def load_schedule() -> tuple[set[tuple[int, int, str]], dict[int, int]]:
     return played, last_week
 
 
-def forward_three(panel: pd.DataFrame) -> pd.Series:
-    """Mean points over weeks W+1..W+3, the training target.
+def forward_three(panel: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Mean points over weeks W+1..W+3, under both defensible definitions.
 
-    A week his team played but he did not appear in scores 0.0 -- that is what
-    the claim actually returned. A team bye is excluded from the average, since
-    it says nothing about the player. Naturally missing at the end of a season
-    and for the current week, which is the point: those rows are not trainable.
+    `fwd3` (the training target) scores a week his team played but he did not
+    appear in as 0.0 -- that is what the claim actually returned, and it is
+    defined across the whole wire universe.
+
+    `fwd3_played` averages only the games he actually played. It grades the
+    player rather than the claim, and is undefined for someone who never plays
+    again, so it silently drops the busts that matter most.
+
+    Both are kept because they are not interchangeable: the choice moves
+    measured input importance materially (see outputs/backtests). A team bye is
+    excluded from both, since a bye says nothing about the player.
     """
     played, last_week = load_schedule()
-    result = pd.Series(np.nan, index=panel.index, dtype=float)
+    claimed = pd.Series(np.nan, index=panel.index, dtype=float)
+    playing = pd.Series(np.nan, index=panel.index, dtype=float)
     for (_, season), group in panel.groupby(["player_id", "season"], sort=False):
         by_week = dict(zip(group["week"], group["pts"]))
         final = last_week.get(season, 18)
         for idx, week, team in zip(group.index, group["week"], group["team"]):
-            future = [
-                by_week.get(w, 0.0)
+            span = [
+                w
                 for w in (week + 1, week + 2, week + 3)
                 if w <= final and (season, w, team) in played
             ]
-            if future:
-                result.loc[idx] = float(np.mean(future))
-    return result
+            if span:
+                claimed.loc[idx] = float(np.mean([by_week.get(w, 0.0) for w in span]))
+            appeared = [by_week[w] for w in span if w in by_week]
+            if appeared:
+                playing.loc[idx] = float(np.mean(appeared))
+    return claimed, playing
 
 
 def build(seasons) -> pd.DataFrame:
@@ -277,7 +290,7 @@ def build(seasons) -> pd.DataFrame:
     panel["pts_lag1"] = by_player["pts"].shift(1)
 
     # --- target -------------------------------------------------------------
-    panel["fwd3"] = forward_three(panel)
+    panel["fwd3"], panel["fwd3_played"] = forward_three(panel)
 
     # --- waiver availability proxy -----------------------------------------
     # Strictly *before* this week: it asks whether the player was rosterable
@@ -293,7 +306,7 @@ def build(seasons) -> pd.DataFrame:
         "snap", "snap_jump", "targets", "carries", "receptions", "air_yards_share",
         "team_tgt", "team_car", "tgt_share", "carry_share", "wopr_opp",
         "eb_tgt_share", "eb_car_share", "kal_role", "cusum",
-        "pts", "pts_lag1", "fwd3",
+        "pts", "pts_lag1", "fwd3", "fwd3_played",
         "cum_before", "rank_before", "on_wire",
     ]
     return panel[keep]
@@ -311,6 +324,7 @@ def main(argv: list[str]) -> int:
     print(f"positions: {panel['position'].value_counts().to_dict()}")
     print(f"on_wire rows: {int(panel['on_wire'].sum()):,}")
     print(f"rows with fwd3: {int(panel['fwd3'].notna().sum()):,}")
+    print(f"rows with fwd3_played: {int(panel['fwd3_played'].notna().sum()):,}")
     return 0
 
 
