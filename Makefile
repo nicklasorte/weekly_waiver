@@ -1,7 +1,7 @@
 PY ?= python3.12
 SEASONS ?= 2022 2023 2024 2025 2026
 
-.PHONY: help install data panel models weekly test clean
+.PHONY: help install data panel models weekly report ledger test clean
 
 help:
 	@echo "make install   install python dependencies"
@@ -11,6 +11,9 @@ help:
 	@echo "make models    fit and persist models/{pos}.joblib + MODEL_CARD.md"
 	@echo "make weekly    score the wire pool: make weekly SEASON=2025 WEEK=8"
 	@echo "               omit SEASON/WEEK to resolve them from the schedule"
+	@echo "make report    write the weekly markdown report: make report SEASON=2025 WEEK=8"
+	@echo "               add ROSTER=path to resolve drops and the roster check"
+	@echo "make ledger    grade logged claims against the naive benchmarks"
 	@echo "make test      run unit tests"
 
 install:
@@ -27,6 +30,12 @@ models:
 
 weekly:
 	$(PY) -m src.weekly $(if $(SEASON),--season $(SEASON)) $(if $(WEEK),--week $(WEEK))
+
+report:
+	$(PY) -m src.report --season $(SEASON) --week $(WEEK) $(if $(ROSTER),--roster $(ROSTER))
+
+ledger:
+	$(PY) -m src.ledger
 
 test:
 	$(PY) -m unittest discover -s tests
