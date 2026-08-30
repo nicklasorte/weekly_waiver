@@ -4,6 +4,10 @@ Two answers: whether the saturated ceiling was actually fixed or only written
 down, and what happened the first time the `weekly waiver table` workflow ran
 on a GitHub runner.
 
+§3 was appended in a later session: the repair those two answers called for,
+and the second run. The story of getting this workflow running is kept here
+rather than split across files.
+
 ---
 
 ## 1. `proj_pts_hi` — was it fixed, or only documented?
@@ -197,3 +201,184 @@ Run here on `main` @ `10a4687` against nflverse as of 2026-08-30T21:26Z
 
 So had the workflow reached its commit step on this run, it would have pushed a
 `MANIFEST.json` timestamp/SHA update and no change to `wk08.csv`.
+
+---
+
+## 3. The repair, and the second run: **PASSED**
+
+- Run: <https://github.com/nicklasorte/weekly_waiver/actions/runs/33339010648>
+- Trigger: `workflow_dispatch` on `claude/weekly-workflow-repair-mqf0jt` @
+  `be4f06a`, inputs `season=2025`, `week=8`
+- Run number **2**; 9 of 9 steps green, 46 seconds wall clock
+- Committed `c22adf4` to the branch — **two files, both allowed**
+
+Run on the branch rather than `main` on purpose: the commit step had never
+executed, and the first thing it does when it works is push. Exercising it
+against the branch put the failure mode where a mistake was recoverable.
+
+### 3.1 Decision 1 — `make install`, not `PY=python`
+
+`make install` now runs before the first `make` target, and the job asserts the
+interpreter it built:
+
+```
+python3.12 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
+Successfully installed joblib-1.5.3 narwhals-2.25.0 numpy-2.5.2 pandas-3.0.5
+python-dateutil-2.9.0.post0 pyyaml-6.0.3 scikit-learn-1.9.0 scipy-1.18.1
+six-1.17.0 threadpoolctl-3.6.0
+Python 3.12.14
+```
+
+Every subsequent step then dispatched through the venv, which is the property
+`PY=python` would have given up:
+
+```
+.venv/bin/python -m unittest discover -s tests     # 48 tests, OK
+.venv/bin/python -m src.fetch 2022 2023 2024 2025 2026
+.venv/bin/python -m src.features 2022 2023 2024 2025 2026
+.venv/bin/python -m src.weekly --season 2025 --week 8
+```
+
+Cost of the choice, measured: the *Install dependencies* step took **21s** on a
+cold pip cache. That is the whole premium, and it buys the runner and a
+developer machine the same interpreter path.
+
+One residual gap, stated because "match local exactly" is the reason the
+decision went this way. The venv's *path* matches and its package set matches
+exactly, but the CPython patch level does not: `setup-python` resolves
+`python3.12` to its tool-cache **3.12.14**, while the container this session
+ran in has **3.12.3**. Same minor, different patch, and nothing in the repo
+pins it. It did not move any number this week (see §3.3), but it is the one
+axis on which the two environments are still not identical.
+
+### 3.2 Decision 2 — what the commit step may touch
+
+The step now commits only `outputs/weekly/**` and `data/raw/MANIFEST.json`, and
+fails the job if a *tracked* file changed anywhere else. What it did:
+
+```
+committing:
+  data/raw/MANIFEST.json
+  outputs/weekly/LAST_MANIFEST.json
+[claude/weekly-workflow-repair-mqf0jt c22adf4] weekly table: 2026-08-30
+ 2 files changed, 17 insertions(+), 17 deletions(-)
+   be4f06a..c22adf4  claude/weekly-workflow-repair-mqf0jt
+```
+
+Both are inside the allowed set. `outputs/reports/**`,
+`outputs/diagnostics/**`, `outputs/ledger/**` and `models/**` were untouched,
+as `git show --stat c22adf4` confirms.
+
+The guard was tested against real changes on a scratch tree before it shipped,
+not just reasoned about. Each case is the guard verbatim, run against a tree
+dirtied to match:
+
+| tree state | guard |
+| --- | --- |
+| `wk08.csv` + `MANIFEST.json` + `LAST_MANIFEST.json` + a new `wk09.csv` | commits all four |
+| `outputs/diagnostics/dryrun_2025wk08.md` edited | **exit 1**, commits nothing |
+| `outputs/ledger/claims.csv` + `models/QB.joblib` edited | **exit 1**, commits nothing |
+| `outputs/reports/2025/wk08.md` edited | **exit 1**, commits nothing |
+
+The failure path is loud and total: it names every offending file, prints
+`git diff --stat`, emits a `::error::` annotation, and exits non-zero **before**
+staging anything — so a stray write produces a red X and no commit, never a
+partial one and never a silent skip.
+
+The check runs twice on purpose. Once on the working tree, and once on the
+*staged* set after `git add`. The second is redundant today; it is what keeps
+the guarantee if someone later widens the `git add` line, which is exactly how
+this step drifted the first time.
+
+### 3.3 Did the runner's table match?
+
+**Yes — byte-for-byte.** `outputs/weekly/2025/wk08.csv` does not appear in
+`c22adf4`, and that absence *is* the result: the runner regenerated the file,
+and `git` found no difference against the committed copy, so there was nothing
+to stage.
+
+Spelled out, since a null result is easy to mistake for "it didn't run":
+
+| artifact | sha256 |
+| --- | --- |
+| committed at `7cfb39f` / `be4f06a` / `c22adf4` (blob `2aa524d1`) | `7710fbb6…56e322` |
+| regenerated locally, this session | `7710fbb6…56e322` |
+| regenerated on the runner | identical to the blob at `HEAD`, by `git diff` |
+
+The runner did write the file — `2025 week 8: 134 wire candidates ->
+outputs/weekly/2025/wk08.csv`, and the printed top-5 tables match the local run
+row for row, to the last decimal. It then compared equal. Two machines, two
+CPython patch levels, a fresh download of every input, and the same 134 rows.
+
+So the mismatch that would have been a real signal did not occur.
+
+### 3.4 What churned, and what that means for every future run
+
+The two files it did commit are both timestamp/digest churn:
+
+- `data/raw/MANIFEST.json` — `generated_utc`, thirteen `fetched_utc` stamps,
+  and the `games.csv` digest. `games.csv` was republished upstream *again*
+  between the local fetch at 20:53Z and the runner's at 22:23Z: same 2,177,172
+  bytes, new sha256. The other twelve files are unchanged.
+- `outputs/weekly/LAST_MANIFEST.json` — the recorded revision, following
+  `games.csv`.
+
+`make data` flagged it at fetch time (`<-- upstream revised, prior results are
+not comparable`), and `make weekly`'s louder REVISED HISTORY banner correctly
+stayed quiet: that check deliberately excludes `games.csv`, which carries no
+season in its name and legitimately changes every week.
+
+Worth knowing before the first unattended Tuesday: **the "nothing changed" exit
+is effectively dead code.** `MANIFEST.json` embeds `generated_utc` and
+`LAST_MANIFEST.json` embeds `recorded`, both of which move on every run. So the
+job will push a commit every week whether or not the table changed — as it just
+did, for a week whose table did not change at all. Left as-is rather than fixed
+quietly; the honest options are to stop tracking those timestamps or to accept
+the weekly noise commit, and that is a call to make deliberately.
+
+### 3.5 Other drift found in the workflow — reported, not fixed
+
+The workflow was last edited in `99d41b7` (PR #5) and the tree grew underneath
+it. Two things were changed beyond the two decisions, and both are named here
+rather than slipped in:
+
+- **The *Install dependencies* step was `pip install -r requirements.txt`** —
+  which in PR #5 *was* `make install`, verbatim, inlined. When PR #7 gave
+  `install` a venv, the copy stopped tracking the original. Replaced by
+  `make install`, which is Decision 1.
+- **`${{ inputs.season }}` was interpolated straight into the shell command.**
+  Now passed via `env:` and referenced as `"$SEASON"`. Blank behaves as before
+  (`make weekly SEASON=` sets an empty make variable, which
+  `$(if $(SEASON),…)` treats as unset), but a value with a space in it is now
+  one argument instead of a shell fragment.
+
+Found and **deliberately left alone**:
+
+- **`git add outputs/` was not wrong when it was written.** In PR #5 `outputs/`
+  held only `weekly/` and `backtests/`. `reports/` and `ledger/` arrived in
+  PR #6, `diagnostics/` in PR #8. The line never changed; the tree grew under
+  it until it covered three record directories. Same drift mechanism as the
+  Makefile, which is why the replacement is an allowlist that fails closed
+  rather than a wider `git add`.
+- **`models/*.joblib` are loaded, never rebuilt, and `requirements.txt` is
+  unpinned.** `make weekly` unpickles the committed bundles; the workflow never
+  runs `make models` (correctly — Decision 2 forbids it). But `requirements.txt`
+  says `scikit-learn>=1.3`, so nothing stops a runner from installing a version
+  newer than the one the bundles were pickled under. Today it happens to match
+  (1.9.0 both places, no `InconsistentVersionWarning` on load), which means this
+  is latent, not benign: the day scikit-learn ships 1.10, the weekly table
+  starts loading models through a version it was never fit under, and the
+  failure mode is a warning at worst and silently different numbers at worst-
+  worst. A pin, or a fit-version assertion at load, would close it.
+- **`git push` has no retry or rebase.** `concurrency` stops the job racing
+  itself, not a human pushing to `main` during the ~45s window. It would fail
+  loudly, which is acceptable, but it would fail after doing all the work.
+- **`make report` and `make ledger` are not in the workflow at all.** That is
+  now deliberate rather than accidental — both write to directories the commit
+  step is forbidden to touch — but it is worth stating that the scheduled job
+  produces the table only. The report and the ledger stay hand-run.
+- **`actions/checkout@v4` and `actions/setup-python@v5` are on Node 20**, which
+  the runner now force-upgrades to Node 24 with a deprecation warning. Harmless
+  today, a version bump eventually.
