@@ -10,7 +10,7 @@ PY ?= $(VENV)/bin/python
 
 SEASONS ?= 2022 2023 2024 2025 2026
 
-.PHONY: help install data panel models weekly report ledger test clean check-py
+.PHONY: help install data panel models weekly report ledger log-claim test clean check-py
 
 help:
 	@echo "make install   create $(VENV) and install python dependencies into it"
@@ -26,6 +26,13 @@ help:
 	@echo "               reads data/roster.yaml automatically when present"
 	@echo "               ROSTER=path overrides it; copy data/roster.example.yaml to start one"
 	@echo "make ledger    grade logged claims against the naive benchmarks"
+	@echo "               and run the three-arm comparison"
+	@echo "               STRICT_ORDER=1 also drops weeks whose arm ordering is unverified"
+	@echo "make log-claim log an arm's picks, in rank order, in one command:"
+	@echo "               make log-claim ARM=prompt PLAYERS=\"Rashee Rice, Ty Johnson\""
+	@echo "               SEASON/WEEK default to the schedule; positions to the panel"
+	@echo "               (override either inline: PLAYERS=\"Ty Johnson:RB\")"
+	@echo "               CONTAMINATED=1 marks a prompt pick made after the table was opened"
 	@echo "make test      run unit tests"
 
 # Creating the venv is skipped when PY points somewhere else, so an externally
@@ -60,7 +67,16 @@ report: check-py
 	$(PY) -m src.report --season $(SEASON) --week $(WEEK) $(if $(ROSTER),--roster $(ROSTER))
 
 ledger: check-py
-	$(PY) -m src.ledger
+	$(PY) -m src.ledger $(if $(STRICT_ORDER),--strict-order)
+
+# ARM and PLAYERS are checked here rather than in argparse so the failure names
+# the make variable you actually typed.
+log-claim: check-py
+	@test -n "$(ARM)" || { echo "usage: make log-claim ARM=prompt PLAYERS=\"Name, Name\""; exit 1; }
+	@test -n "$(PLAYERS)" || { echo "usage: make log-claim ARM=$(ARM) PLAYERS=\"Name, Name\""; exit 1; }
+	$(PY) -m src.log_claim --arm $(ARM) --players "$(PLAYERS)" \
+	  $(if $(SEASON),--season $(SEASON)) $(if $(WEEK),--week $(WEEK)) \
+	  $(if $(WHY),--why "$(WHY)") $(if $(CONTAMINATED),--contaminated)
 
 test: check-py
 	$(PY) -m unittest discover -s tests

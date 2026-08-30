@@ -268,10 +268,16 @@ def load_neutral_opp(seasons) -> tuple[pd.DataFrame, list[int]]:
     return pd.concat(frames, ignore_index=True), covered
 
 
-def load_schedule() -> tuple[set[tuple[int, int, str]], dict[int, int]]:
+def load_schedule(
+    games_path: Path | str | None = None,
+) -> tuple[set[tuple[int, int, str]], dict[int, int]]:
     """(season, week, team) triples that had a regular-season game, and each
-    season's final regular-season week. Used to tell a bye from a healthy scratch."""
-    games = pd.read_csv(RAW_DIR / "games.csv", low_memory=False)
+    season's final regular-season week. Used to tell a bye from a healthy scratch.
+
+    `games_path` defaults to the downloaded schedule; tests point it at the
+    committed fixture so they do not depend on `make data` having run.
+    """
+    games = pd.read_csv(games_path or (RAW_DIR / "games.csv"), low_memory=False)
     games = games[games["game_type"] == "REG"]
     played = set(
         zip(games["season"], games["week"], games["away_team"])

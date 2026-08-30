@@ -1,7 +1,3 @@
-> **Note:** this file was pushed to `main` ahead of the code it describes, which
-> is in PR #10. Until that merges, `src/ledger.py` on `main` does not yet have
-> the arm comparison in it.
-
 # Three-arm comparison: setup
 
 What was built, what it measures, and the rule that decides what it means —
