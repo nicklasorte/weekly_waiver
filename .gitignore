@@ -1,6 +1,11 @@
 # Raw and processed data are reproducible from src/fetch.py + src/features.py.
 # The manifest is the exception: it pins the exact nflverse revision the
 # committed results were produced against, so it must be tracked.
+#
+# FETCH_LOG.json is the deliberate counterpart: fetch timestamps, which move on
+# every run whether or not the bytes did. Tracking them made every weekly run a
+# commit and so made the commit history a heartbeat instead of a record of
+# change. Untracked here, useful on disk.
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep

@@ -167,13 +167,20 @@ def check_revision(season: int) -> bool:
 
 
 def record_revision() -> None:
+    """Persist the digests this run saw, so the next one can diff against them.
+
+    Digests only. An earlier version stamped a `recorded` date here, which moved
+    every run and so committed this file every run whether or not a single hash
+    had changed -- the same noise the manifest used to carry, in the one file
+    whose entire job is to say whether anything changed. When the data did
+    change, git records when; when it did not, there is nothing to record.
+    """
     manifest = load_manifest()
     SEEN_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     SEEN_MANIFEST.write_text(
         json.dumps(
             {
                 "revision": data_revision(manifest),
-                "recorded": date.today().isoformat(),
                 "files": {
                     name: rec.get("sha256")
                     for name, rec in sorted(manifest.get("files", {}).items())
