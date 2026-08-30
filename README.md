@@ -13,8 +13,8 @@ itself is not.
 ```
 src/fetch.py       download nflverse data, pin every file with a sha256
 src/features.py    build the backward-looking player-week panel
-src/models.py      fit and persist the per-position models        (stub)
-src/weekly.py      score the wire pool for one season/week        (stub)
+src/models.py      fit and persist the per-position models
+src/weekly.py      score the wire pool for one season/week
 src/report.py      write the weekly markdown report               (stub)
 src/ledger.py      grade past recommendations after the fact      (stub)
 
@@ -30,6 +30,9 @@ python3.12 -m venv .venv && . .venv/bin/activate
 make install       # pip install -r requirements.txt
 make data          # download 2022-2026 into data/raw/
 make panel         # build data/processed/panel.csv
+make models        # fit models/ and regenerate the model card
+make weekly SEASON=2025 WEEK=8    # score one week's wire pool
+make test          # unit tests
 ```
 
 Every target takes `PY=` and `SEASONS=` overrides, e.g.
@@ -70,3 +73,26 @@ rosterable going *into* the week), and the only forward-looking column is `fwd3`
 the training target. The module docstring states this, along with the two
 judgement calls worth arguing about: where the empirical Bayes priors are fit,
 and how byes are handled at both ends of the window.
+
+## Weekly table
+
+`make weekly` writes `outputs/weekly/{season}/wk{NN}.csv` — every wire-eligible
+player ranked by model score, with the raw usage numbers that produced the score
+in the same row. A bare score is not actionable: if a name surfaces, the reason
+has to be visible next to it.
+
+Omit `SEASON`/`WEEK` and the week is resolved from the schedule in
+`data/raw/games.csv`. Never from calendar arithmetic — week boundaries move for
+byes, international kickoffs and the five-day gap before Week 18, and a day
+counter is wrong several times a season and wrong silently. `tests/test_weekly.py`
+pins that behaviour against real schedule data.
+
+This does **not** filter by availability in any particular league. It narrows a
+few thousand player-weeks to a few dozen names; confirming who is actually free
+is a separate manual step.
+
+`.github/workflows/weekly.yml` runs the whole chain Tuesdays at 06:00 UTC (and
+on demand), then commits `outputs/` and `data/raw/MANIFEST.json`. If nflverse
+revised a prior season since the last run, the job prints a loud warning and
+keeps going — the new table is fine, but anything cached from before the
+revision is no longer comparable.

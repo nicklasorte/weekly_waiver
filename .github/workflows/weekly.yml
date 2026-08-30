@@ -1,0 +1,69 @@
+name: weekly waiver table
+
+# Tuesday 06:00 UTC is roughly 1-2am Eastern: after Monday Night Football has
+# resolved, before Tuesday-morning waivers process. If nflverse has not posted
+# the Monday game yet the run still succeeds -- it just scores the week it can
+# see, which the schedule lookup reports explicitly.
+on:
+  schedule:
+    - cron: "0 6 * * 2"
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season to score (blank = resolve from the schedule)"
+        required: false
+      week:
+        description: "Week to score (blank = resolve from the schedule)"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weekly-waiver
+  cancel-in-progress: false
+
+jobs:
+  table:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Unit tests
+        # The whole job hangs off week resolution being right, so it is checked
+        # before anything is written.
+        run: make test
+
+      - name: Fetch nflverse data
+        # Seasons that have not been published yet report "not published yet"
+        # and are skipped, so this works before Week 1.
+        run: make data
+
+      - name: Build panel
+        run: make panel
+
+      - name: Generate the weekly table
+        # No SEASON/WEEK means src.weekly resolves them from games.csv. It also
+        # prints a loud warning here if nflverse revised a prior season since
+        # the last run -- warning only, the job continues.
+        run: make weekly SEASON=${{ inputs.season }} WEEK=${{ inputs.week }}
+
+      - name: Commit results
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add outputs/ data/raw/MANIFEST.json
+          if git diff --staged --quiet; then
+            echo "nothing changed"
+            exit 0
+          fi
+          git commit -m "weekly table: $(date -u +%Y-%m-%d)"
+          git push
