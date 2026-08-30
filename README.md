@@ -26,14 +26,19 @@ outputs/           backtests, weekly tables, reports, claim ledger
 ## Setup
 
 ```bash
-python3.12 -m venv .venv && . .venv/bin/activate
-make install       # pip install -r requirements.txt
+make install       # create .venv and install requirements.txt into it
 make data          # download 2022-2026 into data/raw/
 make panel         # build data/processed/panel.csv
 make models        # fit models/ and regenerate the model card
 make weekly SEASON=2025 WEEK=8    # score one week's wire pool
 make test          # unit tests
 ```
+
+`make install` builds `.venv` and every other target runs out of it, so there
+is no `activate` step. Point `PY=` at another interpreter to use an environment
+you manage yourself — `make install` then installs into that environment
+instead of creating a venv. `BOOTSTRAP_PY=` chooses the interpreter the venv is
+built from (default `python3.12`) and `VENV=` relocates it.
 
 Every target takes `PY=` and `SEASONS=` overrides, e.g.
 `make panel SEASONS="2022 2023 2024 2025"`.
