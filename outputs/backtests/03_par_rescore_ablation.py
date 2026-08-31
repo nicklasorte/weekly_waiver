@@ -1044,7 +1044,10 @@ def clean_arms(ties: pd.DataFrame) -> set[str]:
     than quietly dropped.
     """
     degenerate = ties.groupby("arm")["degenerate"].mean()
-    return {arm for arm in HEURISTICS if degenerate.get(arm, 0.0) < 0.5}
+    # A list, in `HEURISTICS` order, not a set. Set iteration order over strings
+    # varies with the hash seed, and every arm listed in the verdict prose would
+    # otherwise reshuffle between runs of --report-only on identical inputs.
+    return [arm for arm in HEURISTICS if degenerate.get(arm, 0.0) < 0.5]
 
 
 def model_recommendation(picks: pd.DataFrame, ties: pd.DataFrame) -> tuple[str, list[str]]:
@@ -1066,14 +1069,18 @@ def model_recommendation(picks: pd.DataFrame, ties: pd.DataFrame) -> tuple[str, 
         a["arm"]: a for a in rank_table(picks, HEADLINE_DEPTH)
         if a["rank"] == HEADLINE_DEPTH
     }
-    matched_at_top = [top[a] for a in clean if not readable(top[a])]
-    beaten_deep = [deep[a] for a in clean if readable(deep[a])]
-    closest = min((top[a] for a in clean), key=lambda a: a["mean_diff"])
+    # Sorted by margin, closest comparison first: the arm that comes nearest to
+    # matching the model is the one the recommendation turns on, so it reads
+    # first rather than wherever the dict happens to put it.
+    by_margin = lambda rows: sorted(rows, key=lambda r: r["mean_diff"])
+    matched_at_top = by_margin([top[a] for a in clean if not readable(top[a])])
+    beaten_deep = by_margin([deep[a] for a in clean if readable(deep[a])])
+    closest = by_margin([top[a] for a in clean])[0]
 
     listing = lambda rows: ", ".join(
         f"`{r['arm']}` {signed(r['mean_diff'])} {interval(r)}" for r in rows
     )
-    excluded = sorted(set(HEURISTICS) - clean)
+    excluded = [arm for arm in HEURISTICS if arm not in clean]
     note = (
         [f"`{a}` is excluded from this reading: its picks were decided by the "
          "alphabetical tiebreak in a majority of cells at most positions, so it "

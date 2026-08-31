@@ -55,9 +55,9 @@ Within position, over the same walk-forward weeks. **Positive means the model is
 
 **KEEP THEM — BUT FOR THE LIST, NOT THE TOP NAME.**
 
-**The model's single best name at a position is not better than a one-liner's single best name.** At k=1 it is indistinguishable from 3 of 4 arms that are actually choosing: `opp` +0.09 [-0.43, +0.60], `eb_share` -0.03 [-0.57, +0.50], `hot_hand_pos` +0.15 [-0.45, +0.73]. Sorting the position's wire by shrunk target share, or by last week's points, names a first player as good as the model's.
+**The model's single best name at a position is not better than a one-liner's single best name.** At k=1 it is indistinguishable from 3 of 4 arms that are actually choosing: `eb_share` -0.03 [-0.57, +0.50], `opp` +0.09 [-0.43, +0.60], `hot_hand_pos` +0.15 [-0.45, +0.73]. Sorting the position's wire by shrunk target share, or by last week's points, names a first player as good as the model's.
 
-**Its third name is better, and every arm agrees.** At rank 3 the model is ahead of all 4 of them: `opp` +1.23 [+0.68, +1.82], `snap` +0.82 [+0.29, +1.35], `eb_share` +0.93 [+0.43, +1.44], `hot_hand_pos` +0.93 [+0.40, +1.46]. That is not the k=1 test being underpowered — rank 1 of this run *is* the k=1 arm, same key and same player — so the arms genuinely differ in how they hold up down the list. The one-liners degrade; the model does not.
+**Its third name is better, and every arm agrees.** At rank 3 the model is ahead of all 4 of them: `snap` +0.82 [+0.29, +1.35], `hot_hand_pos` +0.93 [+0.40, +1.46], `eb_share` +0.93 [+0.43, +1.44], `opp` +1.23 [+0.68, +1.82]. That is not the k=1 test being underpowered — rank 1 of this run *is* the k=1 arm, same key and same player — so the arms genuinely differ in how they hold up down the list. The one-liners degrade; the model does not.
 
 **Recommendation: keep `models/`.** What it buys is a ranked list rather than a best guess, and a candidate table is a ranked list — `assign_tiers` puts out two burn names, three fallbacks and four to watch. If the product were a single weekly claim, the honest answer would be to delete the models and sort on one column; it is not.
 
