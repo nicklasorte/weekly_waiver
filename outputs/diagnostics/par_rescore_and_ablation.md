@@ -10,17 +10,17 @@ No model was refitted to answer the first question — the picks from `replay_fu
 
 **Over 156 paired weeks the repo arm beats naive by +1.74 ppg PAR**, 95% interval [+1.05, +2.45], excluding zero. On raw `fwd3` the same picks, over the same weeks, put the repo arm -2.30 ppg [-3.12, -1.47]. **Not one pick changed.** The entire +4.04 ppg swing is the constant each arm has subtracted from it.
 
-**103% of that margin is positional composition, not ranking.** The mix term is -1.80 ppg and the within-position selection term is +0.06 ppg. On raw `fwd3` the same split was +2.13 mix and +0.17 selection. The mix term did not collapse toward zero — it **changed sign and kept roughly its whole magnitude**. PAR does not remove positional composition from the comparison; it re-prices it, and it re-prices it hard enough to move the verdict on its own.
+**103% of that margin is positional composition, not ranking.** The mix term is +1.80 ppg and the within-position selection term is -0.06 ppg. On raw `fwd3` the same split was -2.13 mix and -0.17 selection. The mix term did not collapse toward zero — it **changed sign and kept roughly its whole magnitude**. PAR does not remove positional composition from the comparison; it re-prices it, and it re-prices it hard enough to move the verdict on its own.
 
-**The part of the comparison that is about ranking did not move.** The selection term is +0.17 ppg on raw points, +0.12 on the pool-mean baseline and +0.06 on PAR — a null under every baseline, all three inside the ±0.3 ppg this measurement can resolve. Whatever the headline says, this data still does not distinguish the model's ranking from sorting the wire by last week's box score.
+**The part of the comparison that is about ranking did not move.** The selection term is -0.17 ppg on raw points, -0.12 on the pool-mean baseline and -0.06 on PAR — a null under every baseline, all three inside the ±0.3 ppg this measurement can resolve. Whatever the headline says, this data still does not distinguish the model's ranking from sorting the wire by last week's box score.
 
 | baseline subtracted from `fwd3` | repo − naive | 95% CI | mix | selection |
 | --- | ---: | :---: | ---: | ---: |
-| `fwd3` — raw fantasy points, no baseline (the prior headline) | -2.30 | [-3.12, -1.47] | +2.13 | +0.17 |
-| `vs_pos` — the position pool's mean fwd3 that week | -0.12 | [-0.84, +0.63] | +0.00 | +0.12 |
-| `par` — the rank-R **realised** fwd3 — the metric asked for **(headline)** | +1.74 | [+1.05, +2.45] | -1.80 | +0.06 |
-| `par_std` — rank-R by season-to-date standing, valued at his realised fwd3 | +1.60 | [+0.75, +2.48] | -1.35 | -0.25 |
-| `par_pts` — rank-R by last week's points, valued at his realised fwd3 | +0.98 | [+0.01, +1.96] | -1.12 | +0.14 |
+| `fwd3` — raw fantasy points, no baseline (the prior headline) | -2.30 | [-3.12, -1.47] | -2.13 | -0.17 |
+| `vs_pos` — the position pool's mean fwd3 that week | -0.12 | [-0.84, +0.63] | +0.00 | -0.12 |
+| `par` — the rank-R **realised** fwd3 — the metric asked for **(headline)** | +1.74 | [+1.05, +2.45] | +1.80 | -0.06 |
+| `par_std` — rank-R by season-to-date standing, valued at his realised fwd3 | +1.60 | [+0.75, +2.48] | +1.35 | +0.25 |
+| `par_pts` — rank-R by last week's points, valued at his realised fwd3 | +0.98 | [+0.01, +1.96] | +1.12 | -0.14 |
 
 Same 156 paired weeks, same picks, same realised points in every row. Only the subtracted constant differs. Positive favours the repo arm.
 
@@ -53,50 +53,88 @@ Re-picking the thresholds now, having seen that, would be worse than leaving the
 
 Within position, over the same walk-forward weeks. **Positive means the model is ahead.**
 
-**KEEP THEM — BUT FOR THE LIST, NOT THE TOP NAME.**
+**KEEP THEM, NARROWLY — FOR THE LIST, NOT THE TOP NAME.**
 
-**The model's single best name at a position is not better than a one-liner's single best name.** At k=1 it is indistinguishable from 3 of 4 arms that are actually choosing: `eb_share` -0.03 [-0.57, +0.50], `opp` +0.09 [-0.43, +0.60], `hot_hand_pos` +0.15 [-0.45, +0.73]. Sorting the position's wire by shrunk target share, or by last week's points, names a first player as good as the model's.
+**The model's single best name at a position is not better than a one-liner's single best name.** At k=1 it is indistinguishable from 3 of 4 arms that are actually choosing: `eb_share` -0.03 [-0.57, +0.50], `opp` +0.09 [-0.43, +0.60], `hot_hand_pos` +0.15 [-0.45, +0.73]. Those intervals are about 1.1 ppg wide, so this says the two cannot be separated, not that they are equal — a real half-point difference either way would be invisible here.
 
-**Its third name is better, and every arm agrees.** At rank 3 the model is ahead of all 4 of them: `snap` +0.82 [+0.29, +1.35], `hot_hand_pos` +0.93 [+0.40, +1.46], `eb_share` +0.93 [+0.43, +1.44], `opp` +1.23 [+0.68, +1.82]. That is not the k=1 test being underpowered — rank 1 of this run *is* the k=1 arm, same key and same player — so the arms genuinely differ in how they hold up down the list. The one-liners degrade; the model does not.
+**Its third name is better, and all 4 arms agree.** At rank 3: `hot_hand_pos` +0.93 [+0.40, +1.46], `eb_share` +0.93 [+0.43, +1.44], `opp` +1.23 [+0.68, +1.82], `snap` +0.82 [+0.29, +1.35]. That is not the k=1 test being underpowered — rank 1 of this run *is* the k=1 arm, same key and same player — so the arms genuinely differ in how they hold up below the top name.
 
-One of those does not survive scrutiny and the rest do. `snap`'s margin is carried by a quarterback cell in which it is an alphabetical draw rather than a heuristic; drop quarterback and it falls to +0.41 [-0.15, +0.96], a null. The arms that are choosing at every position hold at +0.71 to +0.95. The recommendation rests on those, not on beating a coin flip.
+**It does not hold up past that, and the run goes deep enough to see it.** At rank 5: `hot_hand_pos` +0.47 [-0.01, +0.93], `eb_share` +0.25 [-0.27, +0.77], `opp` +0.38 [-0.11, +0.87], `snap` +0.31 [-0.18, +0.80] — 4 of 4 intervals cover zero. The model's own levels are not monotone (rank 2 to 3 it *gains* 0.07 ppg) and from rank 3 to rank 5 it falls 1.36 ppg, faster than any one-liner over the same stretch. So the advantage is concentrated below the top name and around the third; it is not a trend that keeps paying as the list gets longer.
 
-**Recommendation: keep `models/`.** What it buys is a ranked list rather than a best guess, and a candidate table is a ranked list — `assign_tiers` puts out two burn names, three fallbacks and four to watch. If the product were a single weekly claim, the honest answer would be to delete the models and sort on one column; it is not.
+**Recommendation: keep `models/`, on a narrow margin.** Over a list of 3 names the model is ahead of every arm (`snap` +0.82 [+0.29, +1.35], `hot_hand_pos` +0.93 [+0.40, +1.46], `eb_share` +0.93 [+0.43, +1.44], `opp` +1.23 [+0.68, +1.82] at rank 3); over 5 it still is (`eb_share` +0.30 [+0.13, +0.47], `hot_hand_pos` +0.42 [+0.22, +0.62], `opp` +0.61 [+0.43, +0.78], `snap` +0.67 [+0.51, +0.84]). A candidate table is a ranked list, not a single name, so that is the quantity that matters and it is positive. But it is small, two of those clear ±0.3 ppg by less than 0.1, and it comes from one part of the list rather than from the model being better throughout.
 
-That is a narrower claim than the models earning their keep outright, and it should not be quoted as one. The version-pinning machinery and the refit discipline are justified by a margin of about 1.0 ppg on the third name at a position, and by nothing measured above it.
+**What this does not say.** It does not say the model finds better players — at the top name it does not. It does not say the advantage grows with depth — it shrinks. And these are 4 comparisons against one model arm over one set of 156 weeks, not four independent replications; the four difference series are correlated, so 'every arm agrees' is weaker corroboration than it sounds.
 
-### The whole ablation in one table (weeks 2–14, 156 weeks)
+**One of those 4 is not a real confirmation.** `snap`'s margin is carried by a quarterback cell in which its key ties at the cut in almost every week, so the pick is the alphabet's rather than the arm's. Drop quarterback and it falls to +0.41 [-0.15, +0.96], a null; the 3 arms that are choosing at every position hold at +0.71 to +0.95. Read the count as 3, not 4.
 
-Each arm's single best name at a position, then its ranked list of three, then that list broken out rank by rank.
+### The ablation (weeks 2–14, 156 weeks)
 
-| arm | sorts on | positions | k=1 (best name) | k=3 (the list) | rank 1 | rank 2 | rank 3 |
-| --- | --- | --- | :---: | :---: | :---: | :---: | :---: |
-| `hot_hand_pos` | prior-week fantasy points, sorted within the position | QB/RB/TE/WR | +0.15 [-0.45, +0.73] | **+0.40** [+0.13, +0.67] | +0.15 [-0.45, +0.73] | +0.14 [-0.38, +0.67] | +0.93 [+0.40, +1.46] |
-| `eb_share` | shrunk carry share (RB) or shrunk target share (WR/TE) | RB/TE/WR | -0.03 [-0.57, +0.50] | **+0.36** [+0.11, +0.60] | -0.03 [-0.57, +0.50] | +0.17 [-0.36, +0.70] | +0.93 [+0.43, +1.44] |
-| `opp` | `wopr_opp` = carries + 2.5 x targets, an unnormalised count | QB/RB/TE/WR | +0.09 [-0.43, +0.60] | **+0.64** [+0.40, +0.88] | +0.09 [-0.43, +0.60] | +0.60 [+0.09, +1.11] | +1.23 [+0.68, +1.82] |
-| `snap` | snap share (`offense_pct`) | QB/RB/TE/WR | +1.10 [+0.53, +1.67] | **+0.85** [+0.59, +1.11] | +1.10 [+0.53, +1.67] | +0.64 [+0.08, +1.19] | +0.82 [+0.29, +1.35] |
+**The list, at three depths.** How many names a rule is asked for is a choice, so it is varied rather than fixed.
 
-Reading it: **the rank-1 column and the k=1 column are the same comparison** — same key, same tiebreak, same player — so a margin that appears at k=3 and not at k=1 is not the k=1 test being underpowered. It is the arms differing in how far down the list they hold up. Every one-liner's third name is worse than the model's third name; every one-liner that is actually choosing has a first name as good as the model's.
+| arm | sorts on | positions | k=1 | k=3 | k=5 |
+| --- | --- | --- | :---: | :---: | :---: |
+| `hot_hand_pos` | prior-week fantasy points, sorted within the position | QB/RB/TE/WR | +0.15 [-0.45, +0.73] | **+0.40** [+0.13, +0.67] | +0.42 [+0.22, +0.62] |
+| `eb_share` | shrunk carry share (RB) or shrunk target share (WR/TE) | RB/TE/WR | -0.03 [-0.57, +0.50] | **+0.36** [+0.11, +0.60] | +0.30 [+0.13, +0.47] |
+| `opp` | `wopr_opp` = carries + 2.5 x targets, an unnormalised count | QB/RB/TE/WR | +0.09 [-0.43, +0.60] | **+0.64** [+0.40, +0.88] | +0.61 [+0.43, +0.78] |
+| `snap` | snap share (`offense_pct`) | QB/RB/TE/WR | +1.10 [+0.53, +1.67] | **+0.85** [+0.59, +1.11] | +0.67 [+0.51, +0.84] |
+
+**Rank by rank.** The same picks, broken out by position in the list rather than averaged over it. This is where the pooled numbers above come from, and it is not flat.
+
+| arm | rank 1 | rank 2 | rank 3 | rank 4 | rank 5 |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| `hot_hand_pos` | +0.15 [-0.45, +0.73] | +0.14 [-0.38, +0.67] | **+0.93** [+0.40, +1.46] | +0.41 [-0.10, +0.91] | +0.47 [-0.01, +0.93] |
+| `eb_share` | -0.03 [-0.57, +0.50] | +0.17 [-0.36, +0.70] | **+0.93** [+0.43, +1.44] | +0.19 [-0.37, +0.75] | +0.25 [-0.27, +0.77] |
+| `opp` | +0.09 [-0.43, +0.60] | **+0.60** [+0.09, +1.11] | **+1.23** [+0.68, +1.82] | **+0.75** [+0.18, +1.32] | +0.38 [-0.11, +0.87] |
+| `snap` | **+1.10** [+0.53, +1.67] | **+0.64** [+0.08, +1.19] | **+0.82** [+0.29, +1.35] | +0.50 [-0.04, +1.01] | +0.31 [-0.18, +0.80] |
+
+Bold marks a margin that both excludes zero and clears the ±0.3 ppg this measurement resolves. The bolded cells are one column.
+
+**The rank-1 column and the k=1 column are the same comparison** — same key, same tiebreak, same player, verified — so a margin that appears at k=3 and not at k=1 is not the k=1 test being underpowered. It is the arms differing in where in the list they hold up.
 
 #### The mechanism, in levels rather than differences
 
-Mean PAR of the pick at each rank. The differences above are this table read sideways, and it makes the shape of the result visible instead of asserted.
+Mean PAR of the pick at each rank, weeks 2–14. **The model appears once per pool.** `eb_share` has no quarterback branch, so the only model row its levels can be differenced against is the one restricted to RB/TE/WR; subtracting the four-position model row from it would compare two different populations and give a number that appears nowhere in the tables above.
 
-| arm | rank 1 | rank 2 | rank 3 | fall, rank 1 → 3 |
-| --- | ---: | ---: | ---: | ---: |
-| `model` | -1.04 | -1.88 | -1.81 | 0.77 |
-| `hot_hand_pos` | -1.19 | -2.02 | -2.74 | 1.55 |
-| `eb_share` | -0.16 | -1.31 | -2.23 | 2.06 |
-| `opp` | -1.13 | -2.48 | -3.04 | 1.91 |
-| `snap` | -2.14 | -2.52 | -2.63 | 0.49 |
+| arm | rank 1 | rank 2 | rank 3 | rank 4 | rank 5 | fall, rank 1 → 5 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `model` | -1.04 | -1.88 | -1.81 | -2.51 | -3.18 | 2.13 |
+| `model (RB/TE/WR)` | -0.19 | -1.13 | -1.29 | -1.76 | -2.54 | 2.35 |
+| `hot_hand_pos` | -1.19 | -2.02 | -2.74 | -2.92 | -3.64 | 2.45 |
+| `eb_share` | -0.16 | -1.31 | -2.23 | -1.95 | -2.79 | 2.63 |
+| `opp` | -1.13 | -2.48 | -3.04 | -3.25 | -3.55 | 2.42 |
+| `snap` | -2.14 | -2.52 | -2.63 | -3.00 | -3.48 | 1.34 |
 
-**`eb_share` names a better first player than the model does** — -0.16 ppg against the model's -1.04, which is the point estimate behind the -0.03 in the table above. It then falls 2.06 ppg across 3 names while the model falls 0.77. That is the whole result: the model is not better at finding the best player at a position, it is better at not running out of them.
+**`eb_share` names as good a first player as the model does.** On the pool it covers, -0.16 ppg against `model (RB/TE/WR)`'s -0.19 — the -0.03 in the table above, and far inside the ±0.3 ppg floor. Across 5 names it falls 2.63 ppg while that model row falls 2.35. **The model's advantage is not at the top of the list** — and the model's own fall of 2.13 ppg says it runs out of names too, just later.
 
 Every level here is negative because replacement is a high-percentile bar — the third-best quarterback and the seventh-best receiver that week, both measured after the fact. See §1; it is a property of the baseline, not a finding about the arms.
 
 **Robustness.** Dropping quarterback entirely — which removes the cells where the tiebreak decides the pick, along with everything else at that position — the rank-3 margins are: `snap` +0.41 [-0.15, +0.96]; `opp` +0.71 [+0.17, +1.26]; `eb_share` +0.93 [+0.43, +1.44]; `hot_hand_pos` +0.95 [+0.40, +1.47]. `opp`, `eb_share` and `hot_hand_pos` survive; `snap` does not, which is the quarterback cell it was carrying.
 
 A margin under ±0.3 ppg is inside what this measurement can resolve and is not a win in either direction, whatever its interval does — see the note on binning at the end.
+
+### Is the rank-3 result one season, or one position?
+
+**Not one season.** Dropping each replay season in turn and recomputing the rank-3 margin:
+
+| arm | full | lowest without one season | highest without one season |
+| --- | ---: | ---: | ---: |
+| `hot_hand_pos` | +0.93 | +0.82 | +1.04 |
+| `eb_share` | +0.93 | +0.79 | +1.08 |
+| `opp` | +1.23 | +1.09 | +1.33 |
+| `snap` | +0.82 | +0.67 | +0.93 |
+
+No season carries it; the swing from removing any one of twelve is smaller than the margin itself.
+
+**But it is one position per arm, and not the same one.** The rank-3 margin, split by position:
+
+| arm | QB | RB | TE | WR |
+| --- | :---: | :---: | :---: | :---: |
+| `hot_hand_pos` | +0.88 [-0.57, +2.39] | +0.20 [-0.83, +1.20] | **+1.60** [+0.79, +2.43] | **+1.03** [+0.09, +2.01] |
+| `eb_share` | n/a | **+2.48** [+1.57, +3.38] | +0.51 [-0.33, +1.38] | -0.20 [-1.08, +0.69] |
+| `opp` | **+2.78** [+1.33, +4.26] | +1.01 [-0.10, +2.09] | +0.00 [-0.88, +0.92] | **+1.13** [+0.19, +2.08] |
+| `snap` | **+2.05** [+0.67, +3.42] | +0.66 [-0.53, +1.84] | +0.30 [-0.54, +1.15] | +0.27 [-0.57, +1.14] |
+
+Each arm's deficit comes from one or two positions and the rest are nulls — `hot_hand_pos` at TE/WR; `eb_share` at RB; `opp` at QB/WR; `snap` at QB. Four arms losing at different positions is weaker corroboration than four arms losing together, and it is part of why the recommendation above is hedged rather than stated flat. The other part is that these are four comparisons against the same model arm over the same 156 weeks, so their difference series are correlated and 'all four agree' is closer to one result than to four.
 
 ### By position
 
@@ -113,12 +151,22 @@ At k=3. ‡ marks a cell where the arm's sort key could not separate the top 3, 
 
 An arm whose sort key ties at the cut is not choosing; the alphabet is. Beating one says nothing about the model, so the rate is reported rather than averaged in silently.
 
-| arm | position | picks decided by the name tiebreak | players tied at the cut |
-| --- | --- | ---: | ---: |
-| `snap` | QB ‡ | 97.4% | 8.9 |
-| `opp` | TE | 14.1% | 2.2 |
-| `opp` | QB | 11.5% | 2.2 |
-| `opp` | WR | 9.6% | 1.8 |
+Reported at every depth the tables above use, because the rate is not the same at each: a key that separates three names may not separate one.
+
+| arm | position | k=1 | k=3 | k=5 | players tied at the cut (k=1) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `snap` | QB ‡ | 100.0% | 97.4% | 94.2% | 8.9 |
+| `opp` | QB | 21.2% | 11.5% | 4.5% | 1.3 |
+| `opp` | TE | 21.2% | 14.1% | 7.7% | 1.3 |
+| `opp` | WR | 18.6% | 9.6% | 2.6% | 1.2 |
+| `snap` | WR | 11.5% | 0.6% | 0.0% | 1.1 |
+| `snap` | TE | 9.0% | 0.0% | 0.0% | 1.1 |
+| `snap` | RB | 3.2% | 0.0% | 0.0% | 1.0 |
+| `opp` | RB | 1.9% | 0.6% | 0.0% | 1.0 |
+| `hot_hand_pos` | WR | 1.3% | 0.0% | 0.0% | 1.0 |
+| `hot_hand_pos` | RB | 1.3% | 0.0% | 0.0% | 1.0 |
+
+‡ marks an arm-position that is degenerate at one or more of these depths. `snap` at quarterback is the extreme case: its k=1 pick is decided by the alphabet in **every** week, because the median week has nine quarterbacks all at 100% of snaps. The model beating that is not a result about the model.
 
 The brief specified `eb_share` as snap share at quarterback. That would have made it a second copy of the `snap` arm — identical picks in every quarterback cell — so it is reported as `n/a` there instead, and pooled over the positions where shrunk shares mean something. Three arms at quarterback, not four, and the table says so rather than showing a forced tie as independent agreement.
 
