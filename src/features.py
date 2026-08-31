@@ -43,6 +43,19 @@ Two documented judgement calls, both stated here rather than buried:
    alongside it because the choice between them moves measured input importance
    materially -- see outputs/backtests/results_input_importance.txt.
 
+3. The depth chart columns (`dc_*`) for week W come from the chart **in force
+   going into week W's games**. nflverse ships two formats: 2013-2024 files are
+   week-labelled club submissions, used as labelled; 2025+ files are timestamped
+   snapshots with no week column, aligned here by taking, per club, the last
+   snapshot strictly before 00:00 UTC on the week's first scheduled game day --
+   league-wide first game day, not the club's own, so a Thursday or
+   international kickoff anywhere in the league tightens the cutoff for
+   everyone. That costs Sunday teams their Friday/Saturday chart updates and
+   buys the guarantee that no snapshot taken after any of the week's games can
+   describe it. Either way the chart predates the row's own game, which is
+   stricter than this file's contract requires -- the Monday after week W would
+   allow week W's outcome, and the chart does not even contain that.
+
 Usage:
     python -m src.features                 # default seasons
     python -m src.features 2022 2023       # specific seasons
@@ -294,6 +307,140 @@ def upward_cusum(series: np.ndarray) -> np.ndarray:
     return out
 
 
+# The one offensive personnel group the 2025+ depth chart feed publishes.
+# Older seasons label the whole offense as one formation instead.
+DC_OFFENSE_POS_GRP = "3WR 1TE"
+
+
+def _dc_week_cutoffs(season: int, games: pd.DataFrame) -> pd.Series:
+    """00:00 UTC on each week's first scheduled game day, indexed by week.
+
+    The alignment cutoff for the timestamped depth chart format. League-wide
+    first game day, not the club's own: a Thursday or international kickoff
+    anywhere tightens the cutoff for every club that week, which loses Sunday
+    teams their Friday and Saturday chart updates and guarantees that no
+    snapshot taken after any of the week's games can be assigned to it. The
+    date boundary rather than kickoff time keeps the comparison in one clock:
+    `dt` is UTC, `gameday` is a local date, and midnight UTC on the game day
+    is still the evening before kickoff everywhere the NFL plays.
+    """
+    rows = games[(games["season"] == season) & (games["game_type"] == "REG")]
+    first = rows.groupby("week")["gameday"].min()
+    return pd.to_datetime(first, utc=True)
+
+
+def _dc_ranks_weekly(frame: pd.DataFrame) -> pd.DataFrame:
+    """The 2013-2024 format: week-labelled club submissions, `depth_team` rank.
+
+    A club lists up to three slots per position (LWR/RWR/SWR each carry their
+    own 1-2-3), so a player's rank at his position is the best rank across his
+    offense listings. `depth_team` never exceeds 3 in this format -- a player
+    deeper than third string is simply absent, so NaN downstream means "not on
+    the chart", which in this era is itself roughly "fourth string or worse".
+    """
+    rows = frame[
+        (frame["game_type"] == "REG")
+        & (frame["formation"] == "Offense")
+        & frame["position"].isin(POSITIONS)
+        & frame["gsis_id"].notna()
+        & frame["week"].notna()
+    ].copy()
+    rows["team"] = normalize_teams(rows["club_code"])
+    rows["week"] = rows["week"].astype(int)
+    rows["dc_rank"] = pd.to_numeric(rows["depth_team"], errors="coerce")
+    rows = rows[rows["dc_rank"].notna()]
+    return rows.groupby(["gsis_id", "week", "team"], as_index=False)["dc_rank"].min()
+
+
+def _dc_ranks_snapshots(frame: pd.DataFrame, cutoffs: pd.Series) -> pd.DataFrame:
+    """The 2025+ format: timestamped snapshots, no week column.
+
+    Per club and week, the last snapshot strictly before that week's cutoff --
+    see `_dc_week_cutoffs` for what the cutoff is and why. `pos_rank` is the
+    rank within a slot (the three starting receiver slots each carry their own
+    1..N), so a player's rank at his position is again the best rank across his
+    listings. This format lists a full roster's depth where the older one stops
+    at 3, so ranks here run past 10; the walk-forward validation treats that
+    era break as the old format's charts simply being shallower.
+    """
+    rows = frame[
+        (frame["pos_grp"] == DC_OFFENSE_POS_GRP)
+        & frame["pos_abb"].isin(POSITIONS)
+        & frame["gsis_id"].notna()
+    ].copy()
+    rows["dt"] = pd.to_datetime(rows["dt"], utc=True)
+    rows["team"] = normalize_teams(rows["team"])
+    out = []
+    for week, cutoff in cutoffs.items():
+        eligible = rows[rows["dt"] < cutoff]
+        if eligible.empty:
+            continue
+        latest = eligible.groupby("team")["dt"].transform("max")
+        ranks = (
+            eligible[eligible["dt"] == latest]
+            .groupby(["gsis_id", "team"], as_index=False)["pos_rank"].min()
+            .rename(columns={"pos_rank": "dc_rank"})
+        )
+        ranks["week"] = int(week)
+        out.append(ranks)
+    if not out:
+        return pd.DataFrame(columns=["gsis_id", "week", "team", "dc_rank"])
+    return pd.concat(out, ignore_index=True)
+
+
+def load_depth_charts(
+    seasons, games_path: Path | str | None = None
+) -> tuple[pd.DataFrame, list[int]]:
+    """Depth chart rank going into each week, per (player, season, week, team).
+
+    Returns the frame and the seasons actually covered, so a season whose file
+    has not been fetched stays NaN in the panel rather than being reported as
+    "not on the chart". Columns: `player_id` (the GSIS id both the stats feed
+    and the depth charts carry), `season`, `week`, `team` (modern franchise
+    code -- the raw files use the period-correct one, see RELOCATIONS),
+    `dc_rank`, and `dc_rank_prev`, the same player's rank going into the
+    previous week. `dc_rank_prev` is player-level rather than player-team so a
+    mid-season trade still has a defined "where did he sit last week".
+    """
+    games = None
+    frames = []
+    covered: list[int] = []
+    for year in seasons:
+        path = RAW_DIR / f"depth_charts_{year}.csv"
+        if not path.exists():
+            print(f"{year}: depth_charts missing, dc_* not computed for this season")
+            continue
+        dc = pd.read_csv(path, low_memory=False)
+        require_rows(dc, path)
+        if "dt" in dc.columns:
+            if games is None:
+                games = pd.read_csv(
+                    games_path or (RAW_DIR / "games.csv"), low_memory=False
+                )
+            ranks = _dc_ranks_snapshots(dc, _dc_week_cutoffs(year, games))
+        else:
+            ranks = _dc_ranks_weekly(dc)
+        ranks["season"] = year
+        frames.append(ranks)
+        covered.append(year)
+
+    if not frames:
+        empty = pd.DataFrame(
+            columns=["player_id", "season", "week", "team", "dc_rank", "dc_rank_prev"]
+        )
+        return empty, covered
+
+    ranks = pd.concat(frames, ignore_index=True)
+    by_player = ranks.groupby(["gsis_id", "season", "week"], as_index=False)[
+        "dc_rank"
+    ].min()
+    prev = by_player.assign(week=by_player["week"] + 1).rename(
+        columns={"dc_rank": "dc_rank_prev"}
+    )
+    ranks = ranks.merge(prev, on=["gsis_id", "season", "week"], how="left")
+    return ranks.rename(columns={"gsis_id": "player_id"}), covered
+
+
 PBP_COLUMNS = [
     "season", "week", "season_type", "wp", "pass_attempt", "rush_attempt",
     "receiver_player_id", "rusher_player_id",
@@ -480,6 +627,37 @@ def build(seasons, prior_seasons=None) -> pd.DataFrame:
     else:
         panel["neutral_opp"] = np.nan
 
+    # --- depth chart role ---------------------------------------------------
+    # The chart in force going into week W's games -- documented judgement call
+    # 3 at the top of this file. Joined on the GSIS id both feeds carry, plus
+    # the modern team code, so a player is read off his own club's chart. A row
+    # in a covered season with no match means the player was not on his club's
+    # offense chart at QB/RB/WR/TE that week -- informative in itself (the
+    # 2013-2024 format stops at third string) -- and stays NaN rather than
+    # being given a sentinel depth. An uncovered season is genuinely unknown
+    # and is also NaN; the coverage print below is what tells them apart.
+    dc, dc_covered = load_depth_charts(seasons)
+    if dc_covered:
+        panel = panel.merge(
+            dc,
+            on=["player_id", "season", "week", "team"],
+            how="left",
+            validate="many_to_one",
+        )
+    else:
+        panel["dc_rank"] = np.nan
+        panel["dc_rank_prev"] = np.nan
+    listed = panel["dc_rank"].notna()
+    panel["dc_is_starter"] = np.where(listed, (panel["dc_rank"] == 1.0).astype(float), np.nan)
+    panel["dc_top2"] = np.where(listed, (panel["dc_rank"] <= 2.0).astype(float), np.nan)
+    # Positive = moved up the chart since last week. Kept, with dc_rank_prev,
+    # so the null on chart *movement* stays reproducible next to the level.
+    panel["dc_improve"] = panel["dc_rank_prev"] - panel["dc_rank"]
+    for year in dc_covered:
+        in_season = panel["season"] == year
+        rate = listed[in_season].mean() if in_season.any() else float("nan")
+        print(f"  depth charts {year}: {rate:.1%} of panel rows carry a chart rank")
+
     # --- waiver availability proxy -----------------------------------------
     # Strictly *before* this week: it asks whether the player was rosterable
     # going into the week, which is what determines whether he sat on the wire.
@@ -494,6 +672,7 @@ def build(seasons, prior_seasons=None) -> pd.DataFrame:
         "snap", "snap_jump", "targets", "carries", "receptions", "air_yards_share",
         "team_tgt", "team_car", "tgt_share", "carry_share", "wopr_opp",
         "eb_tgt_share", "eb_car_share", "kal_role", "cusum",
+        "dc_rank", "dc_rank_prev", "dc_is_starter", "dc_top2", "dc_improve",
         "pts", "pts_lag1", "fwd3", "fwd3_played", "neutral_opp",
         "cum_before", "rank_before", "on_wire",
     ]

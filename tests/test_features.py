@@ -42,6 +42,9 @@ import pandas as pd
 from src.features import (
     RAW_DIR,
     RELOCATIONS,
+    _dc_ranks_snapshots,
+    _dc_ranks_weekly,
+    _dc_week_cutoffs,
     build,
     empirical_bayes_share,
     fit_beta_prior,
@@ -211,6 +214,130 @@ class CrossSeasonColumnTest(unittest.TestCase):
                 err_msg=f"{column} differs from the 2022-only build even with "
                         "prior_seasons=[2022]",
             )
+
+
+def _weekly_chart_row(**overrides) -> dict:
+    row = {
+        "season": 2013,
+        "club_code": "STL",
+        "week": 1,
+        "game_type": "REG",
+        "depth_team": 1,
+        "formation": "Offense",
+        "gsis_id": "00-0000001",
+        "position": "WR",
+    }
+    row.update(overrides)
+    return row
+
+
+class DepthChartWeeklyFormatTest(unittest.TestCase):
+    """The 2013-2024 parser: filters, min-across-slots, team normalisation."""
+
+    def test_rank_is_the_best_across_slot_listings(self):
+        # LWR depth 2 and SWR depth 1 in the same week: the player is a starter.
+        frame = pd.DataFrame([
+            _weekly_chart_row(depth_team=2),
+            _weekly_chart_row(depth_team=1),
+        ])
+        ranks = _dc_ranks_weekly(frame)
+        self.assertEqual(len(ranks), 1)
+        self.assertEqual(float(ranks["dc_rank"].iloc[0]), 1.0)
+
+    def test_defense_special_teams_and_postseason_are_excluded(self):
+        frame = pd.DataFrame([
+            _weekly_chart_row(formation="Defense"),
+            _weekly_chart_row(formation="Special Teams"),
+            _weekly_chart_row(game_type="WC"),
+            _weekly_chart_row(position="G"),
+        ])
+        self.assertTrue(_dc_ranks_weekly(frame).empty)
+
+    def test_period_correct_codes_map_to_the_modern_franchise(self):
+        # The raw files say STL in 2013; the stats feed the panel joins against
+        # says LA in every season. Without this the 2013 Rams never match.
+        frame = pd.DataFrame([_weekly_chart_row(club_code="STL")])
+        self.assertEqual(_dc_ranks_weekly(frame)["team"].iloc[0], "LA")
+
+
+def _snapshot_row(dt: str, **overrides) -> dict:
+    row = {
+        "dt": dt,
+        "team": "ATL",
+        "gsis_id": "00-0000001",
+        "pos_grp": "3WR 1TE",
+        "pos_abb": "WR",
+        "pos_slot": 1,
+        "pos_rank": 1,
+    }
+    row.update(overrides)
+    return row
+
+
+class DepthChartSnapshotFormatTest(unittest.TestCase):
+    """The 2025+ parser: the alignment cutoff is where the leak would live.
+
+    A snapshot taken after a week's games can already reflect them -- a player
+    hurt on Sunday is demoted by Monday -- so assigning it to that week would
+    hand the model the outcome it is predicting around. The cutoff is 00:00 UTC
+    on the week's first scheduled game day, league-wide, which is exactly what
+    these tests pin: a Thursday kickoff tightens the window for every club.
+    """
+
+    # One Thursday game (week 1: Sep 4) and a normal Sunday week 2 (Sep 14).
+    GAMES = pd.DataFrame([
+        {"season": 2025, "game_type": "REG", "week": 1, "gameday": "2025-09-04"},
+        {"season": 2025, "game_type": "REG", "week": 1, "gameday": "2025-09-07"},
+        {"season": 2025, "game_type": "REG", "week": 2, "gameday": "2025-09-14"},
+    ])
+
+    def _ranks(self, rows: list[dict]) -> pd.DataFrame:
+        cutoffs = _dc_week_cutoffs(2025, self.GAMES)
+        return _dc_ranks_snapshots(pd.DataFrame(rows), cutoffs)
+
+    def test_last_snapshot_before_the_cutoff_wins(self):
+        ranks = self._ranks([
+            _snapshot_row("2025-09-01T12:00:00Z", pos_rank=3),
+            _snapshot_row("2025-09-03T12:00:00Z", pos_rank=2),   # latest usable
+        ])
+        wk1 = ranks[ranks["week"] == 1]
+        self.assertEqual(float(wk1["dc_rank"].iloc[0]), 2.0)
+
+    def test_a_snapshot_on_the_first_game_day_is_not_used_for_that_week(self):
+        # Sep 4 is week 1's Thursday. A snapshot from that day -- even one
+        # timestamped before kickoff -- must wait for week 2. Conservative on
+        # purpose: `dt` is UTC and `gameday` is a local date, so "same day"
+        # cannot be ordered against kickoff without inventing a timezone.
+        ranks = self._ranks([
+            _snapshot_row("2025-09-01T12:00:00Z", pos_rank=3),
+            _snapshot_row("2025-09-04T02:00:00Z", pos_rank=1),
+        ])
+        wk1 = ranks[ranks["week"] == 1]
+        wk2 = ranks[ranks["week"] == 2]
+        self.assertEqual(float(wk1["dc_rank"].iloc[0]), 3.0)
+        self.assertEqual(float(wk2["dc_rank"].iloc[0]), 1.0)
+
+    def test_a_snapshot_after_the_season_reaches_no_week(self):
+        ranks = self._ranks([_snapshot_row("2026-03-14T07:00:00Z")])
+        self.assertTrue(ranks.empty)
+
+    def test_rank_is_the_best_across_slot_listings(self):
+        # The three starting receiver slots each carry their own 1..N, so a
+        # player listed second in one slot and first in another is a starter.
+        ranks = self._ranks([
+            _snapshot_row("2025-09-01T12:00:00Z", pos_slot=1, pos_rank=2),
+            _snapshot_row("2025-09-01T12:00:00Z", pos_slot=8, pos_rank=1),
+        ])
+        wk1 = ranks[ranks["week"] == 1]
+        self.assertEqual(len(wk1), 1)
+        self.assertEqual(float(wk1["dc_rank"].iloc[0]), 1.0)
+
+    def test_other_personnel_groups_are_excluded(self):
+        ranks = self._ranks([
+            _snapshot_row("2025-09-01T12:00:00Z", pos_grp="Base 4-3 D", pos_abb="WLB"),
+            _snapshot_row("2025-09-01T12:00:00Z", pos_grp="Special Teams", pos_abb="KR"),
+        ])
+        self.assertTrue(ranks.empty)
 
 
 class EmptySourceTest(unittest.TestCase):

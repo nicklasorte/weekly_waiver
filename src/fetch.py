@@ -54,10 +54,15 @@ UNTRACKED_FIELDS = ("fetched_utc",)
 DEFAULT_SEASONS = range(2022, 2027)
 
 # Season-partitioned release assets: (release, filename template).
+# depth_charts is the large one: the 2025+ files are timestamped roster
+# snapshots (~50MB/season) where 2001-2024 are weekly submissions (~3MB).
+# Contents are asserted at parse time by `features.require_rows`, same as every
+# other source -- an HTTP 200 with a header-only body has burned this repo once.
 SEASON_ASSETS = [
     ("snap_counts", "snap_counts_{year}.csv"),
     ("stats_player", "stats_player_week_{year}.csv"),
     ("pbp", "play_by_play_{year}.csv.gz"),
+    ("depth_charts", "depth_charts_{year}.csv"),
 ]
 
 CHUNK = 1 << 20
