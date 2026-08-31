@@ -37,6 +37,7 @@ from src.ledger import (
     order_status,
     outcome,
     paired_differences,
+    replacement_levels,
     usable_weeks,
     verdict,
     week_means,
@@ -239,23 +240,47 @@ class ContaminationTest(unittest.TestCase):
 
 class PairedTest(unittest.TestCase):
     def weekly(self):
+        """PAR and raw points deliberately disagree in every row.
+
+        The headline pairs on PAR. If it ever silently reverted to raw points
+        the arithmetic below would still look reasonable, so the fixture makes
+        the two answers different and the assertions name which one is right.
+        """
         rows = []
         for week, (prompt, repo) in {8: (5.0, 9.0), 9: (7.0, 8.0), 10: (6.0, 6.0)}.items():
             rows.append({"season": 2025, "week": week, "arm": "prompt",
-                         "order_status": "clean", "n": 3, "mean_fwd3": prompt,
-                         "week_ceiling": 20.0})
+                         "order_status": "clean", "n": 3, "mean_par": prompt,
+                         "mean_fwd3": prompt + 100.0, "week_ceiling": 20.0})
             rows.append({"season": 2025, "week": week, "arm": "repo",
-                         "order_status": "clean", "n": 3, "mean_fwd3": repo,
-                         "week_ceiling": 20.0})
+                         "order_status": "clean", "n": 3, "mean_par": repo,
+                         "mean_fwd3": repo + 200.0, "week_ceiling": 20.0})
         # Week 11 has a repo arm only: nothing to pair it against.
         rows.append({"season": 2025, "week": 11, "arm": "repo", "order_status": "clean",
-                     "n": 3, "mean_fwd3": 99.0, "week_ceiling": 20.0})
+                     "n": 3, "mean_par": 99.0, "mean_fwd3": 99.0,
+                     "week_ceiling": 20.0})
         return pd.DataFrame(rows)
 
     def test_only_weeks_both_arms_covered_are_paired(self):
         pairs = paired_differences(self.weekly(), "repo", "prompt")
         self.assertEqual(list(pairs["week"]), [8, 9, 10])
         self.assertEqual(list(pairs["diff"]), [4.0, 1.0, 0.0])
+
+    def test_pairing_reads_par_not_raw_points(self):
+        # Raw points would put every difference at +100. PAR is the headline.
+        par = paired_differences(self.weekly(), "repo", "prompt")
+        raw = paired_differences(self.weekly(), "repo", "prompt", value="mean_fwd3")
+        self.assertEqual(list(par["diff"]), [4.0, 1.0, 0.0])
+        self.assertEqual(list(raw["diff"]), [104.0, 101.0, 100.0])
+
+    def test_a_week_with_no_par_is_dropped_rather_than_paired_as_nan(self):
+        # A position with nobody resolved on the wire leaves PAR undefined. That
+        # week must leave the comparison, not enter it as a NaN difference that
+        # silently shortens the interval.
+        weekly = self.weekly()
+        weekly.loc[(weekly["week"] == 9) & (weekly["arm"] == "repo"),
+                   "mean_par"] = np.nan
+        pairs = paired_differences(weekly, "repo", "prompt")
+        self.assertEqual(list(pairs["week"]), [8, 10])
 
     def test_an_unpaired_week_cannot_move_the_paired_mean(self):
         # Week 11's repo arm scored 99 and must not leak into the comparison.
@@ -278,14 +303,16 @@ class SummaryTest(unittest.TestCase):
         weekly = pd.DataFrame([
             # Week 8: repo ties naive. A tie is not a win.
             {"season": 2025, "week": 8, "arm": "naive", "order_status": "clean",
-             "n": 3, "mean_fwd3": 10.0, "week_ceiling": 20.0},
+             "n": 3, "mean_par": 1.0, "mean_fwd3": 10.0, "week_ceiling": 20.0},
             {"season": 2025, "week": 8, "arm": "repo", "order_status": "clean",
-             "n": 3, "mean_fwd3": 10.0, "week_ceiling": 20.0},
-            # Week 9: repo wins.
+             "n": 3, "mean_par": 1.0, "mean_fwd3": 10.0, "week_ceiling": 20.0},
+            # Week 9: repo wins on PAR. It loses on raw points, which is the
+            # case the metric exists for -- an arm can capture more fantasy
+            # points and less value, by claiming a position it cannot field.
             {"season": 2025, "week": 9, "arm": "naive", "order_status": "clean",
-             "n": 3, "mean_fwd3": 10.0, "week_ceiling": 20.0},
+             "n": 3, "mean_par": 1.0, "mean_fwd3": 18.0, "week_ceiling": 20.0},
             {"season": 2025, "week": 9, "arm": "repo", "order_status": "clean",
-             "n": 3, "mean_fwd3": 12.0, "week_ceiling": 20.0},
+             "n": 3, "mean_par": 3.0, "mean_fwd3": 12.0, "week_ceiling": 20.0},
         ])
         summary = arm_summary(weekly).set_index("arm")
         self.assertAlmostEqual(summary.loc["repo", "beat_naive_share"], 0.5)
@@ -364,3 +391,133 @@ class GradeArmsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplacementLevelsTest(unittest.TestCase):
+    """The baseline PAR is measured against, and the properties it has to have.
+
+    Each of these is a way the metric could quietly flatter one arm, and each
+    would leave a table that looked fine.
+    """
+
+    def pool(self):
+        """A wire pool shaped like a real one: a few starters and a long tail.
+
+        The tail is the point. Most available quarterbacks are backups who do
+        not play and score zero, which is what pulls the *mean* down to a level
+        no startable quarterback is anywhere near. Testing against a pool of six
+        evenly-spaced quarterbacks would make the metric look like it does
+        nothing.
+        """
+        rows = []
+        # Ten quarterbacks: three who play, seven who do not. Rank 2 -> 26.0.
+        qb = [30.0, 28.0, 26.0] + [0.0] * 7
+        for i, fwd3 in enumerate(qb):
+            rows.append(panel_row(f"QB{i}", 8, pts=float(len(qb) - i), fwd3=fwd3,
+                                  position="QB"))
+        # Eight receivers, a flatter distribution. WR rank 6 is the seventh, 1.0.
+        for i, fwd3 in enumerate([14.0, 12.0, 9.0, 7.0, 5.0, 3.0, 1.0, 0.0]):
+            rows.append(panel_row(f"WR{i}", 8, pts=float(8 - i), fwd3=fwd3))
+        return pd.DataFrame(rows)
+
+    def test_the_level_is_the_position_rank_of_realised_outcomes(self):
+        levels = replacement_levels(self.pool())
+        self.assertAlmostEqual(levels["QB"], 26.0)
+        self.assertAlmostEqual(levels["WR"], 1.0)
+
+    def test_it_sits_well_above_the_pool_mean_which_is_the_whole_point(self):
+        # The objection `with_edge` was written against: the median wire
+        # quarterback is a backup who will not play, so the mean makes every
+        # starter look like a huge edge. If these ever converge the metric has
+        # stopped doing anything.
+        pool = self.pool()
+        levels = replacement_levels(pool)
+        mean = pool[pool["position"] == "QB"]["fwd3"].mean()
+        self.assertGreater(levels["QB"], mean)
+
+    def test_unresolved_players_do_not_drag_the_level_down(self):
+        # Counting a player whose window has not closed as a zero would lower
+        # the baseline and inflate every arm's PAR at once.
+        pool = pd.concat([self.pool(), pd.DataFrame([
+            panel_row("Pending", 8, pts=9.0, fwd3=np.nan, position="QB"),
+        ])], ignore_index=True)
+        self.assertAlmostEqual(replacement_levels(pool)["QB"], 26.0)
+
+    def test_the_level_does_not_depend_on_who_was_picked(self):
+        # Arm-neutrality. The baseline is a function of the pool and the
+        # position; nothing about an arm's ranking may reach it.
+        pool = self.pool()
+        shuffled = pool.sample(frac=1.0, random_state=7).reset_index(drop=True)
+        self.assertEqual(replacement_levels(pool), replacement_levels(shuffled))
+
+    def test_a_position_too_thin_to_have_a_replacement_is_absent(self):
+        thin = pd.DataFrame([panel_row("Only", 8, pts=1.0, fwd3=5.0, position="TE")])
+        self.assertNotIn("TE", replacement_levels(thin))
+
+
+class ParScoringTest(unittest.TestCase):
+    """PAR on graded rows: what it changes, and what it must not."""
+
+    def panel(self):
+        # Same shape as the pool above: streamable quarterbacks bunched at the
+        # top, receivers spread out. QB replacement 26.0, WR replacement 1.0.
+        rows = []
+        qb = [30.0, 28.0, 26.0] + [0.0] * 7
+        for i, fwd3 in enumerate(qb):
+            rows.append(panel_row(f"QB{i}", 8, pts=float(30 - i), fwd3=fwd3,
+                                  position="QB"))
+        for i, fwd3 in enumerate([14.0, 12.0, 9.0, 7.0, 5.0, 3.0, 1.0]):
+            rows.append(panel_row(f"WR{i}", 8, pts=float(10 - i), fwd3=fwd3))
+        return pd.DataFrame(rows)
+
+    def graded(self):
+        claims = pd.DataFrame([
+            claim_row(8, "repo", "WR0", 1, position="WR"),
+            claim_row(8, "repo", "QB0", 2, position="QB"),
+        ])
+        claims["rank_within_arm"] = pd.to_numeric(claims["rank_within_arm"])
+        graded, _ = grade_arms(claims, self.panel())
+        return graded.set_index(["arm", "player"])
+
+    def test_raw_points_are_kept_alongside_par(self):
+        # The training target, and the thing a reader wants to see. Losing it
+        # to the metric change would make the ledger less readable, not more.
+        rows = self.graded()
+        self.assertAlmostEqual(rows.loc[("repo", "QB0"), "actual_fwd3"], 30.0)
+        self.assertAlmostEqual(rows.loc[("repo", "WR0"), "actual_fwd3"], 14.0)
+
+    def test_par_is_the_outcome_less_the_position_baseline(self):
+        rows = self.graded()
+        # QB rank 2 -> third-best of [30, 28, 26, 0 x 7] = 26.0
+        self.assertAlmostEqual(rows.loc[("repo", "QB0"), "repl_fwd3"], 26.0)
+        self.assertAlmostEqual(rows.loc[("repo", "QB0"), "par"], 4.0)
+        # WR rank 6 -> seventh-best of the seven = 1.0
+        self.assertAlmostEqual(rows.loc[("repo", "WR0"), "repl_fwd3"], 1.0)
+        self.assertAlmostEqual(rows.loc[("repo", "WR0"), "par"], 13.0)
+
+    def test_par_reorders_picks_that_raw_points_ranks_the_other_way(self):
+        # The reason the metric changed. On raw points the quarterback wins by
+        # 16; on PAR the receiver wins by 9, because the quarterback you would
+        # have streamed instead was nearly as good and the receiver's
+        # replacement was not.
+        rows = self.graded()
+        self.assertGreater(rows.loc[("repo", "QB0"), "actual_fwd3"],
+                           rows.loc[("repo", "WR0"), "actual_fwd3"])
+        self.assertGreater(rows.loc[("repo", "WR0"), "par"],
+                           rows.loc[("repo", "QB0"), "par"])
+
+    def test_within_a_position_par_shifts_every_pick_by_the_same_amount(self):
+        # Which is why the within-position ablation is invariant to the metric:
+        # a constant per position cancels out of any same-position comparison.
+        rows = self.graded().reset_index()
+        for position, group in rows.groupby("position"):
+            shifts = (group["actual_fwd3"] - group["par"]).round(9).unique()
+            self.assertEqual(len(shifts), 1, msg=f"{position} shifted unevenly")
+
+    def test_week_means_carry_both_metrics(self):
+        claims = pd.DataFrame([claim_row(8, "repo", "WR0", 1, position="WR")])
+        claims["rank_within_arm"] = pd.to_numeric(claims["rank_within_arm"])
+        graded, _ = grade_arms(claims, self.panel())
+        weekly = week_means(graded).set_index("arm")
+        self.assertAlmostEqual(weekly.loc["repo", "mean_fwd3"], 14.0)
+        self.assertAlmostEqual(weekly.loc["repo", "mean_par"], 13.0)

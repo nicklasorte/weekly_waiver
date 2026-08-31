@@ -137,6 +137,31 @@ This is the honest position: the timestamps make the ordering *auditable*, not
 `CONTAMINATED=1` flag is the only thing that makes the rule real, and it works
 only if you use it against your own interest.
 
+## What is being compared
+
+Points above replacement at position, not raw fantasy points. Every arm's picks
+still resolve to `fwd3` and that column is kept on every graded row, but the
+arm means, the paired difference and the pre-registered rule all read
+`fwd3` minus the position's realised replacement level.
+
+The reason is that raw points are not comparable across positions. A
+quarterback averages roughly three times a running back, so an arm that sorts on
+raw points claims quarterbacks and is paid for the position rather than the
+pick — and you start one quarterback, so the second one is worth close to
+nothing. The twelve-season walk-forward replay measured that effect at 93% of
+the naive arm's margin.
+
+**Amended 2026-08-31**, before the rule had ever been evaluated on live data.
+The thresholds did not move; the quantity they are applied to did. The amendment
+is recorded in the `src/ledger.py` module docstring, in
+`outputs/diagnostics/comparison_setup.md`, in the README and here, because this
+document's whole claim is that the rule cannot be quietly revised — so a
+revision that is not quiet is the only kind it can survive.
+`outputs/diagnostics/par_rescore_and_ablation.md` has the arithmetic, including
+what the change does **not** fix: PAR re-prices positional composition rather
+than removing it, and it re-prices it hard enough to move the walk-forward
+verdict on its own.
+
 ## What the output will probably say
 
 Most likely: inconclusive. With around thirteen weeks and the per-player

@@ -204,6 +204,16 @@ Only one arm is ever played on a real roster; the other two are paper. The top
 three picks per arm per week are logged, which turns thirteen observations into
 thirty-nine — still not many, and the output says so.
 
+**Scored on points above replacement, not raw points.** Every arm's picks
+resolve to `fwd3` and that column is kept, but the headline comparison and the
+pre-registered rule both run on `fwd3` minus the position's realised
+replacement level — `report.replacement_level`, the same definition the weekly
+table tiers on. Raw fantasy points pay an arm for claiming quarterbacks, you
+start one, and the walk-forward replay below measured that effect at 93% of the
+naive arm's margin. Amended 2026-08-31, before the rule had ever been evaluated
+on live data; see `outputs/diagnostics/par_rescore_and_ablation.md` for what the
+change does and, just as importantly, what it does not fix.
+
 ```bash
 make log-claim ARM=prompt PLAYERS="First Name, Second Name, Third Name"
 ```
@@ -216,7 +226,9 @@ the comparison. `docs/comparison_protocol.md` has the weekly ritual, what the
 more than a clean-looking one that is not.
 
 The decision rule is pre-registered in the `src/ledger.py` module docstring, so
-it cannot be revised once the numbers land. The most likely honest answer at
+it cannot be revised once the numbers land. Its one amendment — the outcome
+metric, above — is recorded there, here, and in both protocol documents, with
+the date and the reason. The most likely honest answer at
 this sample size is "inconclusive", and the module prints a bootstrap interval
 on the paired prompt-vs-repo difference next to the verdict so that a tie gets
 reported as a tie.
@@ -259,6 +271,36 @@ separately rather than pooled, the roster-depth sensitivity, the contamination
 audit, and what the replay does not test. Read it before trusting a weekly
 table. `outputs/diagnostics/season_replay_2022_2025.md` is the earlier
 three-season version, kept for the comparison.
+
+## Re-scored on PAR, and ablated against a one-liner
+
+`outputs/backtests/03_par_rescore_ablation.py` re-scores the same picks — no
+model refitted, the persisted ones are read — on points above replacement, and
+then asks whether the model beats a sort on a single column.
+
+**The metric change moves the headline and explains nothing.** On PAR the repo
+arm goes from -2.30 ppg to **+1.74 ppg, 95% CI [+1.05, +2.45]**, without a
+single pick changing. But **103% of that margin is position mix**: replacement
+level is a fixed rank against pools of 16 quarterbacks and 47 tight ends, so it
+lands at the 87th percentile at one and the 96th at the other, and subtracting
+it re-prices positional composition rather than removing it. The within-position
+selection term — the only part about ranking — is +0.17 on raw points, +0.12 on
+the pool mean and **+0.06 on PAR**. A null under every baseline. The metric is
+still the right one to score with; it is not evidence about the ranking.
+
+**The model beats a one-liner at depth, not at the top.** Within position, its
+single best name is indistinguishable from sorting on shrunk target share
+(-0.03 [-0.57, +0.50]), on last week's points (+0.15 [-0.45, +0.73]) or on
+opportunity count (+0.09 [-0.43, +0.60]). Its *third* name is better than all
+of them (+0.93, +0.93, +1.23). The one-liners fall 1.6-2.1 ppg from their first
+name to their third; the model falls 0.8. **Keep `models/` — for the ranked
+list, which is what a candidate table is, and not for the top name.**
+
+Within a position PAR and raw `fwd3` are the same comparison exactly, since the
+baseline is one constant per cell; the write-up asserts that rather than
+claiming it. `outputs/diagnostics/par_rescore_and_ablation.md` has the
+reconstruction gates, the arms that turned out to be alphabetical draws, and
+what the depth choice does to the verdict.
 
 ### Two silent data defects this found
 

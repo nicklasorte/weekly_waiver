@@ -1,7 +1,7 @@
-season,week,order_status,arm,rank_within_arm,player,position,actual_fwd3,in_wire_pool,week_ceiling,ceiling_pos,hot_hand_pos
-2025,8,clean,naive,1,Joe Flacco,QB,20.2800,True,20.2800,20.2800,20.2800
-2025,8,clean,naive,2,Rashee Rice,WR,11.7000,True,20.2800,11.7000,11.7000
-2025,8,clean,naive,3,Tyler Huntley,QB,0.0000,True,20.2800,20.2800,20.2800
-2025,8,clean,repo,1,Rashee Rice,WR,11.7000,True,20.2800,11.7000,11.7000
-2025,8,clean,repo,2,Ty Johnson,RB,8.8667,True,20.2800,19.3000,2.0500
-2025,8,clean,repo,3,Cade Otton,TE,11.0000,True,20.2800,18.3333,18.3333
+season,week,order_status,arm,rank_within_arm,player,position,actual_fwd3,repl_fwd3,par,in_wire_pool,week_ceiling,ceiling_pos,hot_hand_pos
+2025,8,clean,naive,1,Joe Flacco,QB,20.2800,11.5000,8.7800,True,20.2800,20.2800,20.2800
+2025,8,clean,naive,2,Rashee Rice,WR,11.7000,3.0333,8.6667,True,20.2800,11.7000,11.7000
+2025,8,clean,naive,3,Tyler Huntley,QB,0.0000,11.5000,-11.5000,True,20.2800,20.2800,20.2800
+2025,8,clean,repo,1,Rashee Rice,WR,11.7000,3.0333,8.6667,True,20.2800,11.7000,11.7000
+2025,8,clean,repo,2,Ty Johnson,RB,8.8667,3.1500,5.7167,True,20.2800,19.3000,2.0500
+2025,8,clean,repo,3,Cade Otton,TE,11.0000,11.0000,0.0000,True,20.2800,18.3333,18.3333

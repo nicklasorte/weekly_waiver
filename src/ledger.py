@@ -49,17 +49,49 @@ The top three picks per arm per week are logged, not just the top one. Thirteen
 weeks of single picks resolves nothing; thirty-nine rows resolves slightly more
 than nothing, which is the honest description of the improvement.
 
-Outcome for every arm is `fwd3`: the player's mean points over the following
+THE OUTCOME METRIC: PAR, NOT RAW fwd3
+=====================================
+
+Every arm's picks resolve to `fwd3`: the player's mean points over the following
 three weeks under NCFOM scoring, with a week his team played and he did not
 counted as 0.0. That is the same convention the models train on, and it is the
-one that matters here -- a recommendation who stops playing is scored as the
-failure it is rather than dropped from the average.
+one that matters for whether a pick worked -- a recommendation who stops playing
+is scored as the failure it is rather than dropped from the average.
 
-Reported per arm: n, mean points captured, share of the weekly ceiling captured,
-and share of weeks beating the naive arm head to head. Then `prompt` vs `repo`
-paired on the weeks both arms covered, because the week-to-week variance in this
-data swamps the difference being measured and paired differences remove most of
-it.
+`fwd3` is kept on every graded row and in every CSV. It is **not** what the
+headline comparison or the decision rule below are computed on. Both run on
+**points above replacement at position**:
+
+    par = fwd3 - replacement_level(pool fwd3 at that position, position)
+
+with `report.replacement_level` and `report.REPLACEMENT_RANK` -- the same
+definition, from the same function, that the weekly table tiers on.
+
+The reason is structural rather than a preference. Raw `fwd3` is fantasy points,
+and quarterbacks score about three times what a running back does, so an arm
+that sorts on raw points loads up on quarterbacks and banks the positional
+difference as if it were skill. You start one quarterback. A claim on a second
+one is worth approximately nothing, and a metric that pays for it is measuring
+the wrong thing. `outputs/backtests/02_walkforward_2014_2025.py` measured that
+directly over twelve seasons: 93% of the naive arm's 2.30 ppg margin was
+positional composition, not ranking.
+
+What PAR does and does not fix is worth stating, because it is easy to overclaim
+and `outputs/diagnostics/par_rescore_and_ablation.md` shows the arithmetic.
+Subtracting a per-(week, position) constant does not remove positional
+composition from the comparison; it re-prices it. Replacement level sits well
+above the pool mean at every position and furthest above it at quarterback,
+so PAR does not merely stop rewarding a quarterback-heavy arm -- it penalises
+one. That is the intended direction (a second quarterback really is worth less
+than the streamer you already have) but it is a re-pricing, not a neutralisation,
+and any PAR margin should be read next to its mix/selection split rather than on
+its own.
+
+Reported per arm: n, mean PAR, mean raw points captured, share of the weekly
+ceiling captured, and share of weeks beating the naive arm head to head. Then
+`prompt` vs `repo` paired on the weeks both arms covered, because the week-to-week
+variance in this data swamps the difference being measured and paired differences
+remove most of it.
 
 
 PRE-REGISTERED DECISION RULE
@@ -83,6 +115,19 @@ happened to land on. A tie reported as a tie is the correct output for most
 seasons; this module is written to make that the easy answer rather than the
 disappointing one.
 
+AMENDMENT, 2026-08-31: the rule above was pre-registered against raw `fwd3` and
+now runs on PAR. The thresholds are unchanged; the quantity they are applied to
+is not. The amendment is recorded here, in `docs/comparison_protocol.md` and in
+`outputs/diagnostics/comparison_setup.md` rather than applied silently, and it is
+made **before the rule has ever been evaluated on live data**. One dry-run week
+is on file (2025 wk08, `repo` only); no `prompt` arm has been logged, so no
+paired difference and no verdict exists yet and none changed sign because of
+this. `outputs/ledger/arm_summary.csv` does move: the same dry-run week is
+re-scored on PAR, which is the amendment doing its job rather than a result
+being revised. A margin measured in raw fantasy points was not a margin in the
+thing being compared; the reasoning is under "THE OUTCOME METRIC" above.
+Nothing else about the rule moved.
+
 Contamination: the `prompt` arm is only a fair comparison if it was produced
 before the repo's candidate table was opened. Weeks flagged `contaminated` in
 the ledger are excluded from the paired analysis and from arm means, and counted
@@ -101,6 +146,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from src.report import REPLACEMENT_RANK, replacement_level
 
 ROOT = Path(__file__).resolve().parents[1]
 PANEL_PATH = ROOT / "data" / "processed" / "panel.csv"
@@ -127,6 +174,17 @@ CI_LEVEL = 0.95
 
 # Thresholds of the pre-registered rule. Named so that a later edit shows up in
 # the diff as an edit to the rule rather than as a tweak to a magic number.
+#
+# These have NOT moved with the 2026-08-31 amendment, and that is a decision
+# worth seeing rather than a detail. They were chosen against raw fantasy
+# points; they are now applied to PAR, which is a different scale. The
+# twelve-season replay is the available calibration: re-scoring the same picks
+# moved the repo-minus-naive margin from -2.30 ppg to +1.74 ppg without a single
+# pick changing, so a 1.5 ppg threshold is a materially easier bar on PAR than
+# it was on raw points. Leaving the numbers alone while changing what they
+# measure is not obviously right; re-picking them after seeing that swing would
+# be worse. They stay, the tension is recorded here, and the interval is printed
+# next to the verdict as it always was.
 NAIVE_MARGIN = 1.5   # ppg an arm must clear naive by for the analysis to be worth anything
 TIE_BAND = 1.0       # ppg within which prompt and repo are the same thing
 REPO_MARGIN = 1.5    # ppg repo must beat prompt by to justify the data layer
@@ -143,6 +201,68 @@ def wire_pool(panel: pd.DataFrame, season: int, week: int) -> pd.DataFrame:
         & panel["on_wire"]
         & panel["snap"].notna()
     ]
+
+
+def replacement_of(values: pd.Series, position: str) -> float:
+    """`report.replacement_level`, refusing to clamp a pool shorter than the rank.
+
+    `with_edge` clamps to the pool's last entry, and that is right where it
+    lives: a clamped group gives its worst player an edge of exactly zero and
+    `assign_tiers` filters him out, so the clamp acts as a safety filter.
+
+    Scoring an outcome has no such filter. A clamped baseline would be the pool
+    minimum -- usually 0.0, since `fwd3` scores a week a player missed as zero --
+    so PAR would collapse to raw `fwd3` and *inflate* the pick rather than
+    exclude it. That is the opposite of the source behaviour, and it would be
+    silent. NaN instead, so `grade_arms` can count it out loud.
+
+    Thin enough to fire is rare on a real wire and not impossible: a position
+    where almost nobody's forward window has resolved, or a hand-logged position
+    string that matches nothing in the panel.
+    """
+    resolved = values.dropna()
+    if len(resolved) <= REPLACEMENT_RANK.get(position, 5):
+        return float("nan")
+    return replacement_level(resolved, position)
+
+
+def replacement_levels(pool: pd.DataFrame) -> dict[str, float]:
+    """Realised replacement level per position for one week's wire pool.
+
+    The baseline PAR is measured against: what the player you would have taken
+    instead actually went on to average. Computed from the same pool the claims
+    were drawn from and from `report.replacement_level`, so the ledger and the
+    weekly table cannot disagree about where replacement sits.
+
+    Three properties this has to have, and does:
+
+    - **Arm-neutral.** It is a function of the pool and the position alone. No
+      arm's picks, ranking or training window can move it, so subtracting it
+      cannot flatter one arm over another within a position.
+    - **Resolved players only.** A player whose forward window has not closed
+      has no outcome to contribute, and including him as a zero would drag the
+      baseline down and inflate every arm's PAR.
+    - **A per-position constant.** Within a position it shifts every arm by the
+      same amount, so it changes no within-position comparison at all. It is the
+      *across*-position comparison it exists to fix.
+
+    It is an order statistic of what happened, which is a harder bar than the
+    replacement level anyone could have identified in advance -- the third-best
+    quarterback in hindsight outscores the third-best quarterback you would have
+    picked. That is a known property, not a bug to be papered over: the same
+    constant is subtracted from every arm, and the size of the effect is measured
+    in `outputs/diagnostics/par_rescore_and_ablation.md`.
+
+    A position too thin to have a replacement level is **absent** from the
+    result rather than present with a clamped one; see `replacement_of` for why
+    that distinction is not pedantry.
+    """
+    resolved = pool[pool["fwd3"].notna()]
+    levels = {
+        str(position): replacement_of(rows["fwd3"], str(position))
+        for position, rows in resolved.groupby("position")
+    }
+    return {name: level for name, level in levels.items() if not pd.isna(level)}
 
 
 def benchmarks(pool: pd.DataFrame, position: str) -> dict:
@@ -469,6 +589,7 @@ def grade_arms(claims: pd.DataFrame, panel: pd.DataFrame) -> tuple[pd.DataFrame,
             if pool["fwd3"].notna().any()
             else np.nan
         )
+        levels = replacement_levels(pool)
 
         picks: list[dict] = []
         for _, pick in naive_picks(panel, season, week).iterrows():
@@ -502,6 +623,13 @@ def grade_arms(claims: pd.DataFrame, panel: pd.DataFrame) -> tuple[pd.DataFrame,
                 )
                 continue
             marks = benchmarks(pool, pick["position"])
+            # A position too thin to have a replacement level leaves the pick
+            # with a NaN PAR, so it drops out of the PAR comparison rather than
+            # being scored against an invented zero. It is not an unscoreable
+            # pick -- `actual_fwd3` is there and the tier ledger still grades it
+            # -- so it does not go in `problems`, which means something
+            # narrower. `report_arms` counts it separately from the graded rows.
+            level = levels.get(pick["position"], np.nan)
             rows.append(
                 {
                     "season": season,
@@ -509,6 +637,8 @@ def grade_arms(claims: pd.DataFrame, panel: pd.DataFrame) -> tuple[pd.DataFrame,
                     "order_status": status,
                     **pick,
                     "actual_fwd3": got,
+                    "repl_fwd3": level,
+                    "par": got - level,
                     "in_wire_pool": in_pool,
                     "week_ceiling": week_ceiling,
                     "ceiling_pos": marks["ceiling_pos"],
@@ -520,19 +650,25 @@ def grade_arms(claims: pd.DataFrame, panel: pd.DataFrame) -> tuple[pd.DataFrame,
 
 
 def week_means(graded: pd.DataFrame) -> pd.DataFrame:
-    """Arm x week table of mean fwd3, with the week's ceiling alongside.
+    """Arm x week table of mean PAR and mean fwd3, with the week's ceiling.
 
     The week is the unit of analysis everywhere below. Within one week an arm's
     three picks are drawn from one pool against one slate of upcoming opponents,
     so they are not three independent observations of the arm.
+
+    `mean_par` is the headline quantity and `mean_fwd3` is kept beside it, so a
+    reader can see both what an arm captured and what it captured above what
+    passing on the claim would have got.
     """
     if graded.empty:
         return pd.DataFrame(
-            columns=["season", "week", "arm", "order_status", "n", "mean_fwd3", "week_ceiling"]
+            columns=["season", "week", "arm", "order_status", "n",
+                     "mean_par", "mean_fwd3", "week_ceiling"]
         )
     grouped = (
         graded.groupby(["season", "week", "arm", "order_status"], as_index=False)
-        .agg(n=("actual_fwd3", "size"), mean_fwd3=("actual_fwd3", "mean"),
+        .agg(n=("actual_fwd3", "size"), mean_par=("par", "mean"),
+             mean_fwd3=("actual_fwd3", "mean"),
              week_ceiling=("week_ceiling", "first"))
     )
     return grouped.sort_values(["season", "week", "arm"]).reset_index(drop=True)
@@ -548,7 +684,7 @@ def arm_summary(weekly: pd.DataFrame) -> pd.DataFrame:
     """
     if weekly.empty:
         return pd.DataFrame()
-    naive = weekly[weekly["arm"] == "naive"].set_index(["season", "week"])["mean_fwd3"]
+    naive = weekly[weekly["arm"] == "naive"].set_index(["season", "week"])["mean_par"]
 
     out = []
     for arm in ARMS:
@@ -559,9 +695,11 @@ def arm_summary(weekly: pd.DataFrame) -> pd.DataFrame:
         if arm == "naive":
             beat = np.nan
         else:
+            # Head to head on PAR, matching the headline. On raw points this
+            # counts a week the arm won only by having claimed a quarterback.
             pairs = [
                 (m, naive.get((s, w)))
-                for s, w, m in zip(rows["season"], rows["week"], rows["mean_fwd3"])
+                for s, w, m in zip(rows["season"], rows["week"], rows["mean_par"])
             ]
             pairs = [(a, b) for a, b in pairs if b is not None and not pd.isna(b)]
             beat = float(np.mean([a > b for a, b in pairs])) if pairs else np.nan
@@ -570,6 +708,7 @@ def arm_summary(weekly: pd.DataFrame) -> pd.DataFrame:
                 "arm": arm,
                 "weeks": int(len(rows)),
                 "n": int(rows["n"].sum()),
+                "mean_par": float(rows["mean_par"].mean()),
                 "mean_fwd3": float(rows["mean_fwd3"].mean()),
                 "ceiling_share": float(share.mean()) if share.notna().any() else np.nan,
                 "beat_naive_share": beat,
@@ -598,8 +737,15 @@ def usable_weeks(weekly: pd.DataFrame, strict_order: bool) -> pd.DataFrame:
     return weekly[~weekly["order_status"].isin(excluded_statuses(strict_order))]
 
 
-def paired_differences(weekly: pd.DataFrame, left: str, right: str) -> pd.DataFrame:
-    """One row per week both arms covered: left mean minus right mean."""
+def paired_differences(weekly: pd.DataFrame, left: str, right: str,
+                       value: str = "mean_par") -> pd.DataFrame:
+    """One row per week both arms covered: left mean minus right mean.
+
+    `value` defaults to PAR, which is what the headline and the decision rule
+    read. Pass `mean_fwd3` to see the same weeks in raw points -- worth doing
+    once, because the difference between the two is the size of the positional
+    effect the metric exists to remove.
+    """
     l = weekly[weekly["arm"] == left].set_index(["season", "week"])
     r = weekly[weekly["arm"] == right].set_index(["season", "week"])
     shared = l.index.intersection(r.index)
@@ -607,11 +753,12 @@ def paired_differences(weekly: pd.DataFrame, left: str, right: str) -> pd.DataFr
         return pd.DataFrame(columns=["season", "week", left, right, "diff"])
     frame = pd.DataFrame(
         {
-            left: l.loc[shared, "mean_fwd3"],
-            right: r.loc[shared, "mean_fwd3"],
+            left: l.loc[shared, value],
+            right: r.loc[shared, value],
         }
     )
     frame["diff"] = frame[left] - frame[right]
+    frame = frame.dropna(subset=["diff"])
     return frame.reset_index().sort_values(["season", "week"]).reset_index(drop=True)
 
 
@@ -714,10 +861,14 @@ def report_arms(graded: pd.DataFrame, weekly: pd.DataFrame, summary: pd.DataFram
 
     print(summary.to_string(index=False, float_format=lambda v: f"{v:7.3f}"))
     print()
-    print("  mean_fwd3        mean over weeks of the arm's mean pick outcome, ppg")
-    print("  ceiling_share    that mean as a share of the best fwd3 on the wire that week")
-    print("  beat_naive_share weeks the arm's mean beat the naive arm's, head to head")
+    print("  mean_par         HEADLINE: mean points above replacement at position, ppg")
+    print("  mean_fwd3        the same picks in raw points, not position-adjusted")
+    print("  ceiling_share    mean_fwd3 as a share of the best fwd3 on the wire that week")
+    print("  beat_naive_share weeks the arm's mean PAR beat the naive arm's, head to head")
     print("  naive has no beat_naive_share: it is the benchmark, not a contender")
+    print()
+    print("  PAR is the comparison. Raw points reward whichever arm claims the most")
+    print("  quarterbacks, and you start one. See the module docstring.")
 
     counts = (
         weekly.drop_duplicates(["season", "week"])
@@ -741,11 +892,30 @@ def report_arms(graded: pd.DataFrame, weekly: pd.DataFrame, summary: pd.DataFram
         weeks_out = sorted({(int(s), int(w)) for s, w in zip(excluded["season"], excluded["week"])})
         print("  excluded weeks: " + ", ".join(f"{s} wk{w:02d}" for s, w in weeks_out))
 
+    # A pick with no PAR still has an outcome and is still in arm_grades.csv;
+    # it is only out of the PAR comparison. Counted here rather than left to be
+    # inferred from a row count that does not add up.
+    unpriced = graded[graded["par"].isna()]
+    if not unpriced.empty:
+        cells = sorted({
+            (int(s), int(w), str(p))
+            for s, w, p in zip(unpriced["season"], unpriced["week"],
+                               unpriced["position"])
+        })
+        print(
+            f"\n{len(unpriced)} pick(s) have no PAR: the wire had too few "
+            "resolved players at the position to have a replacement level. "
+            "Their raw points are still graded; they are out of the PAR "
+            "comparison only."
+        )
+        print("  " + ", ".join(f"{s} wk{w:02d} {p}" for s, w, p in cells))
+
     print()
     print("-" * 74)
-    print(f"PAIRED: prompt vs repo, {CI_LEVEL:.0%} interval, weeks resampled")
+    print(f"PAIRED: prompt vs repo on PAR, {CI_LEVEL:.0%} interval, weeks resampled")
     print("-" * 74)
     pairs = paired_differences(usable, "repo", "prompt")
+    raw_pairs = paired_differences(usable, "repo", "prompt", value="mean_fwd3")
     if pairs.empty:
         print("no week has both a prompt and a repo arm logged and resolved.")
         print("Nothing to pair; the unpaired means above are over different weeks")
@@ -758,7 +928,14 @@ def report_arms(graded: pd.DataFrame, weekly: pd.DataFrame, summary: pd.DataFram
     t_stat, p_value = paired_t(diffs)
     print()
     print(f"paired weeks           n = {len(diffs)}")
-    print(f"mean repo - prompt       {diffs.mean():+7.2f} ppg")
+    print(f"mean repo - prompt       {diffs.mean():+7.2f} ppg PAR")
+    if not raw_pairs.empty:
+        # Printed next to the headline, never instead of it. A large gap between
+        # the two is the positional-composition effect, and seeing it is the
+        # point of keeping raw points on the row.
+        raw = raw_pairs["diff"].to_numpy(dtype=float)
+        print(f"  same weeks, raw points {raw.mean():+7.2f} ppg  "
+              f"(difference = positional composition)")
     if len(diffs) >= 2:
         print(f"sd of paired difference  {diffs.std(ddof=1):7.2f} ppg")
     if not np.isnan(lo):
@@ -786,7 +963,8 @@ def report_arms(graded: pd.DataFrame, weekly: pd.DataFrame, summary: pd.DataFram
     for arm in LOGGED_ARMS:
         d = naive_pairs[arm]
         if len(d):
-            print(f"{arm:7s} minus naive, paired over {len(d):2d} week(s): {d.mean():+7.2f} ppg")
+            print(f"{arm:7s} minus naive on PAR, paired over {len(d):2d} week(s): "
+                  f"{d.mean():+7.2f} ppg")
         else:
             print(f"{arm:7s} minus naive: no shared weeks")
     prompt_gap = float(naive_pairs["prompt"].mean()) if len(naive_pairs["prompt"]) else np.nan
