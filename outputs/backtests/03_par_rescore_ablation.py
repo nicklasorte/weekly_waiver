@@ -738,7 +738,7 @@ def week_block_ci(cells: pd.DataFrame, arm: str) -> dict:
     }
 
 
-def rank_table(picks: pd.DataFrame, depth: int) -> list[dict]:
+def rank_table(picks: pd.DataFrame, depth: int, exclude=()) -> list[dict]:
     """model minus each heuristic at each rank within the position, separately.
 
     This is what tells a power difference from a depth effect. Averaging three
@@ -750,6 +750,7 @@ def rank_table(picks: pd.DataFrame, depth: int) -> list[dict]:
     artefact of averaging.
     """
     rows = picks[(picks["depth"] == depth) & picks["week"].isin(HEADLINE_WEEKS)]
+    rows = rows[~rows["position"].isin(list(exclude))]
     out = []
     for rank in range(1, depth + 1):
         cells = rows[rows["rank_within_arm"] == rank].groupby(
@@ -941,6 +942,14 @@ def main(argv: list[str] | None = None) -> int:
 # the write-up
 # ==========================================================================
 
+def names(rows) -> str:
+    """`a`, `b` and `c` -- readable in a sentence, unlike a semicolon list."""
+    marks = [f"`{r['arm']}`" for r in rows]
+    if len(marks) <= 1:
+        return "".join(marks)
+    return ", ".join(marks[:-1]) + " and " + marks[-1]
+
+
 def signed(value: float, places: int = 2) -> str:
     return "n/a" if value is None or np.isnan(value) else f"{value:+.{places}f}"
 
@@ -1077,6 +1086,20 @@ def model_recommendation(picks: pd.DataFrame, ties: pd.DataFrame) -> tuple[str, 
     beaten_deep = by_margin([deep[a] for a in clean if readable(deep[a])])
     closest = by_margin([top[a] for a in clean])[0]
 
+    # Quarterback is where the tiebreak degeneracy lives, so the deepest-rank
+    # result is re-run without it. An arm whose margin does not survive that is
+    # named as the exception rather than carried by the pooled figure.
+    no_qb = {
+        a["arm"]: a for a in rank_table(picks, HEADLINE_DEPTH, exclude=("QB",))
+        if a["rank"] == HEADLINE_DEPTH
+    }
+    survives = by_margin([no_qb[a["arm"]] for a in beaten_deep
+                          if readable(no_qb[a["arm"]])])
+    fragile = next(
+        (no_qb[a["arm"]] for a in beaten_deep if not readable(no_qb[a["arm"]])),
+        None,
+    )
+
     listing = lambda rows: ", ".join(
         f"`{r['arm']}` {signed(r['mean_diff'])} {interval(r)}" for r in rows
     )
@@ -1102,6 +1125,16 @@ def model_recommendation(picks: pd.DataFrame, ties: pd.DataFrame) -> tuple[str, 
         ] + note
 
     if matched_at_top and len(beaten_deep) == len(clean):
+        fragility = ([] if fragile is None or not survives else [
+            "One of those does not survive scrutiny and the rest do. "
+            f"`{fragile['arm']}`'s margin is carried by a quarterback cell in "
+            "which it is an alphabetical draw rather than a heuristic; drop "
+            f"quarterback and it falls to {signed(fragile['mean_diff'])} "
+            f"{interval(fragile)}, a null. The arms that are choosing at every "
+            f"position hold at {signed(min(r['mean_diff'] for r in survives))} to "
+            f"{signed(max(r['mean_diff'] for r in survives))}. The recommendation "
+            "rests on those, not on beating a coin flip."
+        ])
         return "KEEP THEM — BUT FOR THE LIST, NOT THE TOP NAME", [
             f"**The model's single best name at a position is not better than a "
             f"one-liner's single best name.** At k=1 it is indistinguishable from "
@@ -1115,6 +1148,7 @@ def model_recommendation(picks: pd.DataFrame, ties: pd.DataFrame) -> tuple[str, 
             "k=1 test being underpowered — rank 1 of this run *is* the k=1 arm, "
             "same key and same player — so the arms genuinely differ in how they "
             "hold up down the list. The one-liners degrade; the model does not.",
+        ] + fragility + [
             "**Recommendation: keep `models/`.** What it buys is a ranked list "
             "rather than a best guess, and a candidate table is a ranked list — "
             "`assign_tiers` puts out two burn names, three fallbacks and four to "
@@ -1343,13 +1377,22 @@ def write_markdown(scored: pd.DataFrame, ablation: pd.DataFrame,
         "running out of them. Every level here is negative because replacement "
         "is a high-percentile bar — see §1.")
     add("")
-    add("**Robustness.** Dropping quarterback entirely, which removes the "
-        "degenerate `snap` cell along with everything else at that position, the "
-        "rank-3 margins are `hot_hand_pos` +0.95 [+0.40, +1.47], `eb_share` +0.93 "
-        "[+0.43, +1.44], `opp` +0.71 [+0.17, +1.26] — the finding survives — and "
-        "`snap` +0.41 [-0.15, +0.96], which does not. `snap`'s pooled figure is "
-        "inflated by a quarterback cell in which it is an alphabetical draw; the "
-        "three arms the recommendation rests on are unaffected.")
+    no_qb = sorted(
+        (a for a in rank_table(ablation, HEADLINE_DEPTH, exclude=("QB",))
+         if a["rank"] == HEADLINE_DEPTH),
+        key=lambda a: a["mean_diff"],
+    )
+    holds = [a for a in no_qb if readable(a)]
+    drops = [a for a in no_qb if not readable(a)]
+    add(f"**Robustness.** Dropping quarterback entirely — which removes the "
+        "cells where the tiebreak decides the pick, along with everything else "
+        f"at that position — the rank-{HEADLINE_DEPTH} margins are: "
+        + "; ".join(f"`{a['arm']}` {signed(a['mean_diff'])} {interval(a)}"
+                    for a in no_qb)
+        + ". "
+        + (f"{names(holds)} survive{'s' if len(holds) == 1 else ''}"
+           + (f"; {names(drops)} do{'es' if len(drops) == 1 else ''} not, which "
+              "is the quarterback cell it was carrying." if drops else ".")))
     add("")
     add(f"A margin under ±{NOISE_FLOOR_PPG:.1f} ppg is inside what this "
         "measurement can resolve and is not a win in either direction, whatever "

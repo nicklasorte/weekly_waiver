@@ -59,6 +59,8 @@ Within position, over the same walk-forward weeks. **Positive means the model is
 
 **Its third name is better, and every arm agrees.** At rank 3 the model is ahead of all 4 of them: `snap` +0.82 [+0.29, +1.35], `hot_hand_pos` +0.93 [+0.40, +1.46], `eb_share` +0.93 [+0.43, +1.44], `opp` +1.23 [+0.68, +1.82]. That is not the k=1 test being underpowered — rank 1 of this run *is* the k=1 arm, same key and same player — so the arms genuinely differ in how they hold up down the list. The one-liners degrade; the model does not.
 
+One of those does not survive scrutiny and the rest do. `snap`'s margin is carried by a quarterback cell in which it is an alphabetical draw rather than a heuristic; drop quarterback and it falls to +0.41 [-0.15, +0.96], a null. The arms that are choosing at every position hold at +0.71 to +0.95. The recommendation rests on those, not on beating a coin flip.
+
 **Recommendation: keep `models/`.** What it buys is a ranked list rather than a best guess, and a candidate table is a ranked list — `assign_tiers` puts out two burn names, three fallbacks and four to watch. If the product were a single weekly claim, the honest answer would be to delete the models and sort on one column; it is not.
 
 That is a narrower claim than the models earning their keep outright, and it should not be quoted as one. The version-pinning machinery and the refit discipline are justified by a margin of about 1.0 ppg on the third name at a position, and by nothing measured above it.
@@ -90,7 +92,7 @@ Mean PAR of the pick at each rank. The differences above are this table read sid
 
 **`eb_share` names a better first player than the model does** — -0.16 ppg against the model's -1.04, which is the point estimate behind the -0.03 in the table above. It then falls 2.06 ppg across three names while the model falls 0.77. That is the whole result: the model is not better at finding the best player at a position, it is better at not running out of them. Every level here is negative because replacement is a high-percentile bar — see §1.
 
-**Robustness.** Dropping quarterback entirely, which removes the degenerate `snap` cell along with everything else at that position, the rank-3 margins are `hot_hand_pos` +0.95 [+0.40, +1.47], `eb_share` +0.93 [+0.43, +1.44], `opp` +0.71 [+0.17, +1.26] — the finding survives — and `snap` +0.41 [-0.15, +0.96], which does not. `snap`'s pooled figure is inflated by a quarterback cell in which it is an alphabetical draw; the three arms the recommendation rests on are unaffected.
+**Robustness.** Dropping quarterback entirely — which removes the cells where the tiebreak decides the pick, along with everything else at that position — the rank-3 margins are: `snap` +0.41 [-0.15, +0.96]; `opp` +0.71 [+0.17, +1.26]; `eb_share` +0.93 [+0.43, +1.44]; `hot_hand_pos` +0.95 [+0.40, +1.47]. `opp`, `eb_share` and `hot_hand_pos` survive; `snap` does not, which is the quarterback cell it was carrying.
 
 A margin under ±0.3 ppg is inside what this measurement can resolve and is not a win in either direction, whatever its interval does — see the note on binning at the end.
 
