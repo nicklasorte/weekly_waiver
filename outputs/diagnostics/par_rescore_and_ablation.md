@@ -84,13 +84,15 @@ Mean PAR of the pick at each rank. The differences above are this table read sid
 
 | arm | rank 1 | rank 2 | rank 3 | fall, rank 1 → 3 |
 | --- | ---: | ---: | ---: | ---: |
-| `model` | -1.37 | -2.17 | -2.06 | 0.69 |
-| `hot_hand_pos` | -1.54 | -2.46 | -2.97 | 1.43 |
-| `eb_share` | -0.68 | -1.68 | -2.50 | 1.82 |
-| `opp` | -1.61 | -2.81 | -3.35 | 1.74 |
-| `snap` | -2.34 | -2.69 | -3.04 | 0.70 |
+| `model` | -1.04 | -1.88 | -1.81 | 0.77 |
+| `hot_hand_pos` | -1.19 | -2.02 | -2.74 | 1.55 |
+| `eb_share` | -0.16 | -1.31 | -2.23 | 2.06 |
+| `opp` | -1.13 | -2.48 | -3.04 | 1.91 |
+| `snap` | -2.14 | -2.52 | -2.63 | 0.49 |
 
-**`eb_share` names a better first player than the model does** — -0.16 ppg against the model's -1.04, which is the point estimate behind the -0.03 in the table above. It then falls 2.06 ppg across three names while the model falls 0.77. That is the whole result: the model is not better at finding the best player at a position, it is better at not running out of them. Every level here is negative because replacement is a high-percentile bar — see §1.
+**`eb_share` names a better first player than the model does** — -0.16 ppg against the model's -1.04, which is the point estimate behind the -0.03 in the table above. It then falls 2.06 ppg across 3 names while the model falls 0.77. That is the whole result: the model is not better at finding the best player at a position, it is better at not running out of them.
+
+Every level here is negative because replacement is a high-percentile bar — the third-best quarterback and the seventh-best receiver that week, both measured after the fact. See §1; it is a property of the baseline, not a finding about the arms.
 
 **Robustness.** Dropping quarterback entirely — which removes the cells where the tiebreak decides the pick, along with everything else at that position — the rank-3 margins are: `snap` +0.41 [-0.15, +0.96]; `opp` +0.71 [+0.17, +1.26]; `eb_share` +0.93 [+0.43, +1.44]; `hot_hand_pos` +0.95 [+0.40, +1.47]. `opp`, `eb_share` and `hot_hand_pos` survive; `snap` does not, which is the quarterback cell it was carrying.
 

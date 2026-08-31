@@ -1355,10 +1355,18 @@ def write_markdown(scored: pd.DataFrame, ablation: pd.DataFrame,
         "read sideways, and it makes the shape of the result visible instead of "
         "asserted.")
     add("")
+    # Weeks 2-14, like every other number in this document. `head` is the whole
+    # depth-k run and still carries weeks 15-17, whose forward windows are
+    # truncated; averaging those in here and nowhere else would put a table on
+    # the page that quietly disagrees with the one above it.
     levels_by_rank = (
-        head.pivot_table(index="arm", columns="rank_within_arm", values="par",
-                         aggfunc="mean")
+        head[head["week"].isin(HEADLINE_WEEKS)]
+        .pivot_table(index="arm", columns="rank_within_arm", values="par",
+                     aggfunc="mean")
     )
+    first, last = levels_by_rank.columns[0], levels_by_rank.columns[-1]
+    falls = levels_by_rank[first] - levels_by_rank[last]
+    best_first = levels_by_rank[first].idxmax()
     add("| arm | " + " | ".join(f"rank {r}" for r in levels_by_rank.columns)
         + " | fall, rank 1 → 3 |")
     add("| --- | " + " | ".join("---:" for _ in levels_by_rank.columns) + " | ---: |")
@@ -1369,13 +1377,26 @@ def write_markdown(scored: pd.DataFrame, ablation: pd.DataFrame,
         add(f"| `{arm}` | " + " | ".join(f"{row[c]:.2f}" for c in levels_by_rank.columns)
             + f" | {row[levels_by_rank.columns[0]] - row[levels_by_rank.columns[-1]]:.2f} |")
     add("")
-    add("**`eb_share` names a better first player than the model does** — -0.16 "
-        "ppg against the model's -1.04, which is the point estimate behind the "
-        "-0.03 in the table above. It then falls 2.06 ppg across three names "
-        "while the model falls 0.77. That is the whole result: the model is not "
-        "better at finding the best player at a position, it is better at not "
-        "running out of them. Every level here is negative because replacement "
-        "is a high-percentile bar — see §1.")
+    if best_first != "model":
+        add(f"**`{best_first}` names a better first player than the model does** "
+            f"— {levels_by_rank.loc[best_first, first]:.2f} ppg against the "
+            f"model's {levels_by_rank.loc['model', first]:.2f}, which is the "
+            "point estimate behind the "
+            f"{signed(by_rank[(best_first, 1)]['mean_diff'])} in the table "
+            f"above. It then falls {falls[best_first]:.2f} ppg across "
+            f"{HEADLINE_DEPTH} names while the model falls "
+            f"{falls['model']:.2f}. That is the whole result: the model is not "
+            "better at finding the best player at a position, it is better at "
+            "not running out of them.")
+    else:
+        add(f"The model names the best first player of any arm "
+            f"({levels_by_rank.loc['model', first]:.2f} ppg) and also falls "
+            f"least across {HEADLINE_DEPTH} names ({falls['model']:.2f}).")
+    add("")
+    add("Every level here is negative because replacement is a high-percentile "
+        "bar — the third-best quarterback and the seventh-best receiver that "
+        "week, both measured after the fact. See §1; it is a property of the "
+        "baseline, not a finding about the arms.")
     add("")
     no_qb = sorted(
         (a for a in rank_table(ablation, HEADLINE_DEPTH, exclude=("QB",))
