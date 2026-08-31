@@ -120,6 +120,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -160,17 +161,75 @@ bootstrap_ci = R.bootstrap_ci
 paired = R.paired
 week_means = R.week_means
 arm_stats = R.arm_stats
-bucket_table = R.bucket_table
 decompose = R.decompose
 overlap_rate = R.overlap_rate
 repo_picks = R.repo_picks
 train_points_scale = R.train_points_scale
 fmt = R.fmt
 
+def stratified_ci(diffs: np.ndarray, strata: np.ndarray | None):
+    """Percentile CI for the mean paired difference, resampling weeks by season.
+
+    Wraps the prior replay's bootstrap with one guard it does not need and this
+    one does. Stratifying by season keeps each season's week count in every
+    draw, which is right when a season contributes several weeks -- but a bucket
+    covering a *single* week gives every season a stratum of size one, and
+    resampling one item with replacement always returns that item. Every draw is
+    then identical and the interval collapses to zero width, which reads as
+    impossible precision rather than as no information.
+
+    Where any stratum is a singleton the resampling falls back to unstratified,
+    which is the honest interval for that bucket: it loses the season balance
+    the stratification was buying, and says so in the write-up rather than
+    reporting a degenerate one.
+    """
+    if strata is None or len(diffs) < 2:
+        return bootstrap_ci(diffs, None), False
+    _, counts = np.unique(strata, return_counts=True)
+    if counts.min() < 2:
+        return bootstrap_ci(diffs, None), True
+    return bootstrap_ci(diffs, strata), False
+
+
+def bucket_table(weekly, picks, seasons, weeks, stratify: bool,
+                 value: str = "mean_fwd3") -> dict:
+    """Both arms plus the paired difference over one week bucket.
+
+    Mirrors `01_season_replay.bucket_table`, differing only in routing the
+    interval through `stratified_ci` above and carrying the `degenerate` flag
+    that says when the stratification had to be dropped.
+    """
+    if seasons is not None:
+        weekly = weekly[weekly["season"].isin(seasons)]
+        picks = picks[picks["season"].isin(seasons)]
+    pairs = paired(weekly, weeks, value)
+    diffs = pairs["diff"].to_numpy(dtype=float)
+    strata = pairs["season"].to_numpy() if stratify and len(pairs) else None
+    (lo, hi), degenerate = stratified_ci(diffs, strata)
+    return {
+        "repo": arm_stats(weekly, picks, "repo", weeks),
+        "naive": arm_stats(weekly, picks, "naive", weeks),
+        "value": value,
+        "n_weeks": len(diffs),
+        "mean_diff": float(diffs.mean()) if len(diffs) else np.nan,
+        "sd_diff": float(diffs.std(ddof=1)) if len(diffs) > 1 else np.nan,
+        "ci_lo": lo,
+        "ci_hi": hi,
+        "unstratified": degenerate,
+        "pairs": pairs,
+    }
+
+
 OUT_DIR = Path(__file__).resolve().parent / "replay_full"
 MODEL_DIR = Path(__file__).resolve().parent / "replay_models_full"
 PANEL_CACHE = ROOT / "data" / "processed"
 DIAGNOSTIC = ROOT / "outputs" / "diagnostics" / "walkforward_2014_2025.md"
+# What could not be scored, persisted next to the picks. Reconstructing it from
+# `replay_picks.csv` alone is impossible -- an unscoreable pick leaves no row --
+# so a --report-only rerun would otherwise quietly report an empty exclusion
+# list, which is precisely the kind of silent omission this file exists to
+# avoid.
+NOTES_PATH = OUT_DIR / "unscored.json"
 
 # Snap counts begin in 2013. `snap_counts_2012.csv` is a header row and nothing
 # else, so this floor is enforced by `features.require_rows` rather than trusted.
@@ -574,20 +633,63 @@ def verdict(result: dict, adjusted: dict, split: dict) -> tuple[str, list[str]]:
         "on raw fantasy points. `fwd3` is also raw fantasy points, so the arm "
         "that loads up on the highest-scoring position is rewarded for it.",
 
-        f"**It does not rescue the repo arm.** With position removed -- each pick "
-        "scored against what an arbitrary available player at the same position "
-        f"returned that week -- naive is still ahead by "
-        f"{abs(adjusted['mean_diff']):.2f} ppg (repo − naive = "
-        f"{adjusted['mean_diff']:+.2f}, {CI_LEVEL:.0%} interval "
-        f"[{adjusted['ci_lo']:+.2f}, {adjusted['ci_hi']:+.2f}]). Both framings "
-        "agree in direction, which is what makes the verdict robust rather than "
-        "an artefact of the scoring convention.",
+        adjusted_reading(adjusted, split),
 
         f"The model is not inert: its picks beat the same-position pool average "
         f"by {split['repo']['selection']:+.2f} ppg, so it finds "
-        f"better-than-random players. The naive rule simply finds better ones "
-        f"({split['naive']['selection']:+.2f} ppg).",
+        f"better-than-random players. The naive rule finds ones worth "
+        f"{split['naive']['selection']:+.2f} ppg by the same measure.",
     ]
+
+
+def adjusted_reading(adjusted: dict, split: dict) -> str:
+    """What survives when positional composition is taken out of the comparison.
+
+    This is the paragraph most likely to be written wrong, in either direction.
+    The raw comparison is between two arms that pick different positions, scored
+    in a currency (raw fantasy points) that pays different amounts per position;
+    once that is removed, the remainder is the only part that is a statement
+    about ranking players well. If that remainder's interval covers zero it must
+    be reported as covering zero -- a null is not a narrow win for whichever arm
+    happens to hold the point estimate, and the instruction not to round a null
+    up into a win applies whichever arm it would flatter.
+    """
+    diff, lo, hi = adjusted["mean_diff"], adjusted["ci_lo"], adjusted["ci_hi"]
+    n = adjusted["n_weeks"]
+    interval = (
+        f"repo − naive = {diff:+.2f} ppg, {CI_LEVEL:.0%} interval "
+        f"[{lo:+.2f}, {hi:+.2f}], n = {n} weeks"
+    )
+    if np.isnan(lo) or lo <= 0.0 <= hi:
+        return (
+            "**Take position out and the gap goes with it.** Scoring each pick "
+            "against what an arbitrary available player at the same position "
+            f"returned that week: {interval}. **That interval covers zero.** "
+            "Within position, this data does not distinguish the model's "
+            "ranking from sorting the wire by last week's box score -- neither "
+            "arm is measurably better at picking players, and the headline is "
+            "a statement about which positions each arm walks into rather than "
+            "about ranking quality. Reported as a null because it is one: the "
+            "point estimate leans naive, but the interval does not support "
+            "calling that a win for either side."
+        )
+    if diff > 0:
+        return (
+            "**With position removed the repo arm is ahead.** Scoring each pick "
+            "against what an arbitrary available player at the same position "
+            f"returned that week: {interval}, excluding zero. So the ranking "
+            "does select better players within a position, and loses the raw "
+            "comparison purely on positional composition. That is a real "
+            "finding about the scoring convention, not a defence of the raw "
+            "number -- `fwd3` is what the pipeline is graded on."
+        )
+    return (
+        "**It does not rescue the repo arm.** With position removed -- each pick "
+        "scored against what an arbitrary available player at the same position "
+        f"returned that week -- naive is still ahead: {interval}, excluding "
+        "zero. Both framings agree in direction, which is what makes the verdict "
+        "robust rather than an artefact of the scoring convention."
+    )
 
 
 # ==========================================================================
@@ -597,7 +699,8 @@ def verdict(result: dict, adjusted: dict, split: dict) -> tuple[str, list[str]]:
 def ci_cell(bucket: dict) -> str:
     if np.isnan(bucket.get("ci_lo", np.nan)):
         return "n/a"
-    return f"[{fmt(bucket['ci_lo'])}, {fmt(bucket['ci_hi'])}]"
+    mark = " †" if bucket.get("unstratified") else ""
+    return f"[{fmt(bucket['ci_lo'])}, {fmt(bucket['ci_hi'])}]{mark}"
 
 
 def season_row(weekly, picks, season, scheme, weeks) -> str:
@@ -952,6 +1055,15 @@ def write_markdown(
             f"{ci_cell(b)} |"
         )
     add("")
+    add(
+        "`†` marks an interval resampled **without** season stratification. A "
+        "single-week bucket gives every season a stratum of one week, and "
+        "resampling one item with replacement always returns it — every draw is "
+        "identical and the interval collapses to zero width, which would read as "
+        "impossible precision rather than as no information. Those rows fall back "
+        "to unstratified resampling, which is wider and honest."
+    )
+    add("")
 
     # ---- forward window -------------------------------------------------
     add("## The forward window and the 2021 expansion")
@@ -1076,10 +1188,20 @@ def write_markdown(
     add(
         "Points above replacement is the repo's own correction for positional "
         "incomparability, and `fwd3` — raw fantasy points — puts it straight "
-        "back. The position-adjusted figure is the one to carry forward: repo − "
-        f"naive = {adjusted['mean_diff']:+.2f} ppg, {CI_LEVEL:.0%} interval "
-        f"[{adjusted['ci_lo']:+.2f}, {adjusted['ci_hi']:+.2f}], n = "
-        f"{adjusted['n_weeks']} weeks."
+        "back. The position-adjusted comparison is the one to carry forward."
+    )
+    add("")
+    add(adjusted_reading(adjusted, split))
+    add("")
+    add(
+        "Worth contrasting with the three-season replay in "
+        "`season_replay_2022_2025.md`, which put 61% of the gap on position mix "
+        "and still found the repo arm behind by 1.18 ppg [-2.23, -0.12] with "
+        "position removed. Twelve seasons move both numbers: the mix share rises "
+        f"to {split['mix'] / split['gap']:.0%} and the within-position remainder "
+        "shrinks to a null with an interval roughly a third as wide. The larger "
+        "sample did not sharpen a small real effect into significance — it "
+        "dissolved it."
     )
     add("")
     add(
@@ -1119,8 +1241,9 @@ def write_markdown(
         "that has seen 2025. Closed by `build(seasons, "
         "prior_seasons=train_seasons)`, which fits the prior on the training "
         "seasons only and applies it everywhere. This matters more over twelve "
-        "seasons than over three: the 2014 replay's prior is fitted on 2013 "
-        "alone, against a shipped prior fitted on thirteen seasons. |"
+        "seasons than over three: unclosed, a 2014 row in this build would be "
+        "shrunk toward a prior fitted on all thirteen seasons through 2025. "
+        "Closed, it is fitted on 2013 alone. |"
     )
     add(
         "| rank-to-points scale | **yes, closed** | `weekly.points_scale` maps a "
@@ -1461,14 +1584,31 @@ def depth_reading(depth: dict, pooled: dict, weeks) -> str:
     )
     spread = max(abs(d - base) for _, d, _, _ in signs)
     if same_direction and same_conclusion:
+        magnitude = (
+            (
+                f"The **magnitude** is not equally stable: the paired difference "
+                f"moves by up to {spread:.2f} ppg across the range, more than the "
+                "±0.3 ppg of run-to-run floating-point noise, and a deeper wire "
+                "pool narrows the gap because it dilutes the naive arm's "
+                "quarterbacks faster than it dilutes the repo arm's picks. So "
+                "quote the headline as a range across plausible depths rather "
+                "than as a point."
+            )
+            if spread > 0.3 else
+            (
+                f"The magnitude barely moves either — at most {spread:.2f} ppg "
+                "across the range, inside the ±0.3 ppg of run-to-run "
+                "floating-point noise."
+            )
+        )
         return (
-            f"**The verdict does not depend on the thresholds.** All three "
-            f"depths point the same way and reach the same conclusion about "
-            f"zero; the widest the paired difference moves is {spread:.2f} ppg, "
-            "against a run-to-run floating-point sensitivity of about ±0.3 ppg. "
-            "Whether 2014's replacement level sat exactly where today's does is "
-            "therefore not load-bearing for the answer, which is the most that "
-            "can be said for an assumption that cannot be checked directly."
+            "**The verdict does not depend on the thresholds.** All three depths "
+            "point the same way and reach the same conclusion about zero, so the "
+            "answer to the question asked is not an artefact of where the wire "
+            f"is cut. {magnitude} Whether 2014's replacement level sat exactly "
+            "where today's does is therefore not load-bearing for the verdict, "
+            "which is the most that can be said for an assumption that cannot be "
+            "checked directly."
         )
     return (
         f"**The verdict is sensitive to the thresholds.** The paired difference "
@@ -1482,15 +1622,69 @@ def depth_reading(depth: dict, pooled: dict, weeks) -> str:
 
 # ==========================================================================
 
+def load_previous_run():
+    """Rebuild the reporting inputs from a completed run's saved picks.
+
+    Everything the write-up needs is a function of the per-pick rows and the
+    notes file, so the prose can be revised without refitting 48 models. The
+    picks carry their own `scheme` column, which is what separates the two
+    training windows and the two depth-sensitivity arms back out.
+    """
+    path = OUT_DIR / "replay_picks.csv"
+    if not path.exists():
+        raise SystemExit(
+            f"{path} not found -- --report-only rewrites the markdown from a "
+            "completed run, so run the script without it first."
+        )
+    picks = pd.read_csv(path)
+    results = {}
+    for scheme in SCHEMES:
+        frame = picks[picks["scheme"] == scheme]
+        if frame.empty:
+            raise SystemExit(f"no rows for scheme '{scheme}' in {path.name}")
+        results[scheme] = {"picks": frame, "weekly": week_means(frame)}
+
+    depth = None
+    labels = {scale: f"depth{scale:g}" for scale in DEPTH_SCALES}
+    if all((picks["scheme"] == label).any() for label in labels.values()):
+        depth = {}
+        for scale, label in labels.items():
+            frame = picks[picks["scheme"] == label]
+            depth[scale] = {"picks": frame, "weekly": week_means(frame)}
+
+    notes = {"unscored": [], "dead_weeks": []}
+    if NOTES_PATH.exists():
+        notes = json.loads(NOTES_PATH.read_text())
+    else:
+        print(
+            f"  warning: {NOTES_PATH.name} absent, so the 'what could not be "
+            "scored' section will understate. Rerun in full to regenerate it."
+        )
+    return results, depth, notes["unscored"], notes["dead_weeks"]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--no-depth-sensitivity", action="store_true",
-        help="skip the +/-25% roster-depth sensitivity check",
+        help="skip the +/-25%% roster-depth sensitivity check",
+    )
+    parser.add_argument(
+        "--report-only", action="store_true",
+        help=(
+            "rewrite the markdown from an existing replay_full/replay_picks.csv "
+            "without refitting anything; fails if that run is absent"
+        ),
     )
     args = parser.parse_args(argv)
 
     finals = final_weeks()
+
+    if args.report_only:
+        results, depth, unscored, dead_weeks = load_previous_run()
+        write_markdown(results, finals, depth, unscored, dead_weeks)
+        return 0
+
     print("=" * 74)
     print(f"WALK-FORWARD REPLAY {REPLAY_SEASONS[0]}-{REPLAY_SEASONS[-1]}")
     print(f"season lengths: {finals}")
@@ -1531,6 +1725,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     pd.concat(weeks_frames, ignore_index=True).to_csv(
         OUT_DIR / "replay_weeks.csv", index=False, float_format="%.4f"
+    )
+    NOTES_PATH.write_text(
+        json.dumps({"unscored": unscored, "dead_weeks": dead_weeks}, indent=2) + "\n"
     )
 
     headline_weeks = dict((n, w) for n, w, _ in BUCKETS)[HEADLINE_BUCKET]

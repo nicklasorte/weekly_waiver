@@ -223,25 +223,62 @@ reported as a tie.
 
 ## Does any of this beat the naive benchmark?
 
-On three seasons of walk-forward replay, **no**.
-`outputs/backtests/01_season_replay.py` refits the models per season on the
-seasons strictly before it (2023 on 2022, 2024 on 2022-23, 2025 on 2022-24),
-replays weeks 2-17, and scores the table's top three claims against the three
-highest scorers from the previous week. Over 42 paired weeks the repo arm loses
-by **3.35 ppg**, 95% CI [-4.59, -2.10]. It loses in all three seasons.
+On twelve seasons of walk-forward replay, **no — but not for the reason the
+three-season replay suggested.**
 
-About 61% of that margin is positional composition rather than ranking quality —
-the naive rule sorts on raw fantasy points, quarterbacks score the most raw
-fantasy points, so the naive arm is 63% quarterbacks and `fwd3` rewards it for
-that. Points above replacement exists to undo exactly that incomparability, and
-the scoring convention puts it back. Correcting for it narrows the gap and does
-not close it: with position removed the repo arm still trails by 1.18 ppg,
-95% CI [-2.23, -0.12].
+`outputs/backtests/02_walkforward_2014_2025.py` fetches 2013-2025, refits the
+models per season on the seasons strictly before it (2014 on 2013, 2025 on
+2013-2024), replays weeks 2-17, and scores the table's top three claims against
+the three highest scorers from the previous week. Over 156 paired weeks — about
+570 picks per arm — the repo arm loses by **2.30 ppg**, 95% CI [-3.12, -1.47].
 
-`outputs/diagnostics/season_replay_2022_2025.md` has the full result, the
-contamination audit behind it (two real train/test leaks found and closed), and
-what the replay does not test — no judgement layer, no roster constraints, no
-real league availability. Read it before trusting a weekly table.
+**About 93% of that gap is positional composition, not ranking quality.** The
+naive rule sorts on raw fantasy points, quarterbacks score the most raw fantasy
+points, so the naive arm is 59% quarterbacks against the repo arm's 21%, and
+`fwd3` rewards it for that. Points above replacement exists to undo exactly that
+incomparability, and the scoring convention puts it straight back.
+
+**Take position out and the difference is a null**: repo − naive = -0.12 ppg,
+95% CI [-0.84, +0.63], which covers zero. Within position, this data does not
+distinguish the model's ranking from sorting the wire by last week's box score.
+That is a change from the three-season result, which put 61% of the gap on
+position mix and still had the repo arm behind by 1.18 ppg [-2.23, -0.12] after
+adjustment — the larger sample did not sharpen that into significance, it
+dissolved it.
+
+**Training window: do not recency-weight.** Every replay season was run twice,
+trained on all prior seasons and on the most recent three. Across the nine
+seasons where those differ, recent − expanding is **-0.32 ppg, 95% CI [-1.01,
++0.37]** — indistinguishable from nothing. Football did not change over this
+span in a way these features can see, so the production models should keep using
+all available history.
+
+`outputs/diagnostics/walkforward_2014_2025.md` has the per-season tables, the
+expanding-vs-recent comparison, the 2020 and 2021 structural breaks handled
+separately rather than pooled, the roster-depth sensitivity, the contamination
+audit, and what the replay does not test. Read it before trusting a weekly
+table. `outputs/diagnostics/season_replay_2022_2025.md` is the earlier
+three-season version, kept for the comparison.
+
+### Two silent data defects this found
+
+Both were found by building the panel back to 2013, and either would have
+produced a clean-looking result computed on wrong data.
+
+- **The three nflverse feeds disagree on team codes before 2020.**
+  `stats_player_week` uses the modern franchise code in every season — a 2013
+  Rams row says `LA` — while `snap_counts` and `games.csv` use the code in force
+  at the time (`STL`). The stats-to-snaps merge joins on `team`, so every player
+  on a relocated franchise was dropped: 2013 lost **12.1% of stat rows against a
+  ~2.5% baseline**, three entire franchises. `forward_three` then failed to find
+  their games and left `fwd3` — the training target — NaN for all of them. Fixed
+  by `features.RELOCATIONS`. The last relocation was 2020, so this is a **no-op
+  from 2020 on** and cannot change what the shipped pipeline produces.
+- **A season asset can return HTTP 200 and contain only a header row.**
+  `snap_counts_2012.csv` is exactly that, 154 bytes. A fetch-succeeded check
+  passes it and the season silently contributes nothing.
+  `features.require_rows` now asserts on parsed contents rather than on the
+  fetch.
 
 ## Known gaps
 
