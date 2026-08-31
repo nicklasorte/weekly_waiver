@@ -33,11 +33,21 @@ PRE-REGISTERED SUSPICION, STATED BEFORE THE RUN
 The exploratory +0.03 came from a within-season split, which is the *easier*
 test. If the walk-forward -- the harder test -- comes back materially larger,
 the first hypothesis is not "better feature", it is a leak in the
-snapshot-to-week alignment. Concretely: a pooled rank-objective delta at WR or
-TE beyond R2_SUSPICION_FACTOR times the exploratory delta flags the verdict
-rather than celebrating, and the 6 ppg arm-margin tripwire from the prior
-replays applies unchanged. A null is an acceptable answer; a suspiciously
-good one is not.
+snapshot-to-week alignment. Concretely: a pooled delta at WR or TE -- the two
+positions the exploratory test flagged, on either target, since the
+exploratory convention is nearer raw points than the rank objective -- that
+is significant and beyond R2_SUSPICION_FACTOR times the exploratory delta
+flags the verdict rather than celebrating. The check is scoped to WR and TE
+deliberately: doubling RB's exploratory +0.001 would condemn noise, and QB
+has no exploratory reference at all -- the 6 ppg arm-margin tripwire from
+the prior replays, which applies unchanged, is the guard that covers every
+position. A null is an acceptable answer; a suspiciously good one is not.
+
+One more piece of hygiene the design owes the reader: 2025 is both the
+season the hypothesis was *discovered* on and one of the twelve replay
+seasons. A discovery sample inside its own confirmation pool biases the pool
+toward confirming, so the pooled deltas are reported both with 2025 and
+without it, and the without-2025 number is the confirmatory one.
 
 THE ALIGNMENT, AND WHERE THE LEAK WOULD LIVE
 ============================================
@@ -266,16 +276,25 @@ def r2_rows(
     return rows
 
 
-def r2_summary(r2: pd.DataFrame, target: str) -> dict[str, dict]:
+def r2_summary(
+    r2: pd.DataFrame, target: str, exclude_season: int | None = None
+) -> dict[str, dict]:
     """Pooled per-position delta (dc - base) with a bootstrap CI over seasons.
 
     The season is the resampling unit: twelve paired (base, dc) fits per
     position, each pair sharing its training data, test season and rows, so
     the per-season delta is the honest observation and there are only twelve
     of them. The interval is wide because the truth is wide.
+
+    `exclude_season` drops one season from the pool. Used to take 2025 -- the
+    season the hypothesis was discovered on -- out of its own confirmation
+    sample; the module docstring says why the without-2025 pool is the
+    confirmatory one.
     """
     out: dict[str, dict] = {}
     rows = r2[r2["target"] == target]
+    if exclude_season is not None:
+        rows = rows[rows["season"] != exclude_season]
     for position in M.POSITIONS:
         sub = rows[rows["position"] == position].pivot_table(
             index="season", columns="variant", values="r2"
@@ -433,22 +452,40 @@ def pick_agreement(picks: pd.DataFrame, weeks) -> dict:
     total = 0
     shared = 0
     named = 0
+    top1_same = 0
+    top1_weeks = 0
     per_season: dict[int, list[float]] = {}
     for (season, week), group in rows.groupby(["season", "week"]):
-        base = set(group.loc[group["arm"] == "repo_base", "player"])
-        dc = set(group.loc[group["arm"] == "repo_dc", "player"])
+        base_rows = group[group["arm"] == "repo_base"]
+        dc_rows = group[group["arm"] == "repo_dc"]
+        base = set(base_rows["player"])
+        dc = set(dc_rows["player"])
         if not base and not dc:
             continue
         total += 1
+        # Set comparison on purpose for "identical": the *list* the report
+        # tiers from. The #1 name is tracked separately below because that is
+        # the claim actually made, and a reordered top three is a changed
+        # decision there even when the sets agree. Lists can run shorter than
+        # ARM_DEPTH (positive-edge names only, unresolved picks dropped); the
+        # overlap denominator takes the longer list, which can only understate
+        # agreement, never inflate it.
         identical += int(base == dc)
         shared += len(base & dc)
         named += max(len(base), len(dc))
+        base_top = base_rows.loc[base_rows["rank_within_arm"] == 1, "player"]
+        dc_top = dc_rows.loc[dc_rows["rank_within_arm"] == 1, "player"]
+        if len(base_top) and len(dc_top):
+            top1_weeks += 1
+            top1_same += int(base_top.iloc[0] == dc_top.iloc[0])
         per_season.setdefault(season, []).append(float(base == dc))
     return {
         "weeks": total,
         "identical_weeks": identical,
         "identical_share": identical / total if total else np.nan,
         "name_overlap": shared / named if named else np.nan,
+        "top1_same_share": top1_same / top1_weeks if top1_weeks else np.nan,
+        "top1_weeks": top1_weeks,
         "per_season_identical": {s: float(np.mean(v)) for s, v in per_season.items()},
     }
 
@@ -556,24 +593,96 @@ def permutation_table() -> dict[str, list[tuple[str, float]]] | None:
 # the verdict
 # ==========================================================================
 
-def verdict(
-    rank_summary: dict, arm_par: dict, arm_fwd3: dict, agreement: dict,
-) -> tuple[str, list[str]]:
-    """The headline reading. Written so a null is the easy answer and a
-    too-good answer fires the alignment suspicion before any celebration."""
-    survives = {
-        p: s for p, s in rank_summary.items()
+def points_reading(points_summary: dict) -> str:
+    """What the raw-points secondary target adds to, or subtracts from, the verdict.
+
+    Computed rather than assumed, because it is the one place this run's answer
+    is not a flat null and the temptation to round it in either direction --
+    up into "the feature works" or down into silence -- is exactly what the
+    honesty constraints forbid.
+    """
+    real = {
+        p: s for p, s in points_summary.items()
         if not np.isnan(s["ci_lo"]) and s["ci_lo"] > 0 and s["delta_mean"] > 0
     }
-    suspicious = {
-        p: s for p, s in survives.items()
-        if p in EXPLORATORY_DELTA
-        and s["delta_mean"] > R2_SUSPICION_FACTOR * max(EXPLORATORY_DELTA[p], 1e-9)
-    }
-    decisions_move = (
-        not np.isnan(arm_par["ci_lo"])
-        and not (arm_par["ci_lo"] <= 0.0 <= arm_par["ci_hi"])
+    if not real:
+        return (
+            "The raw-points target tells the same story: every interval covers "
+            "zero. The two conventions agree on the null."
+        )
+    names = ", ".join(
+        f"{p} ({s['delta_mean']:+.3f} [{s['ci_lo']:+.3f}, {s['ci_hi']:+.3f}])"
+        for p, s in sorted(real.items())
     )
+    unnamed = sorted(set(real) - {"WR", "TE"})
+    missing_named = sorted({"WR", "TE"} - set(real))
+    placement = []
+    if unnamed:
+        placement.append(
+            f"{'/'.join(unnamed)} " + ("are positions" if len(unnamed) > 1 else "is a position")
+            + " the exploratory test did **not** flag"
+        )
+    if missing_named:
+        placement.append(
+            f"at {'/'.join(missing_named)} -- where the exploratory gain was "
+            "supposed to live -- the interval covers zero"
+        )
+    where = "; ".join(placement) if placement else "the positions the hypothesis named"
+    return (
+        f"On raw points the delta is small but real at {names}. Note where it "
+        f"landed: {where}. It does not transfer to the rank objective the "
+        "models are fitted and served on (percentile rank within a week is "
+        "what a claim is ordered by, and it absorbs the level information "
+        "usage already carries), and the arm comparison shows it buys no "
+        "decisions. A genuine sliver of raw-points signal that the pipeline's "
+        "objective cannot use is recorded as exactly that -- not rounded up "
+        "into a keep, not rounded down into nothing."
+    )
+
+
+def verdict(
+    rank_summary: dict, rank_confirm: dict, points_summary: dict,
+    arm_par: dict, arm_fwd3: dict, agreement: dict,
+) -> tuple[str, list[str]]:
+    """The headline reading. Written so a null is the easy answer and a
+    too-good answer fires the alignment suspicion before any celebration.
+
+    Three details of the branching exist because a review pass caught their
+    absence, and each would have printed a lie in a world this run did not
+    happen to land in: the suspicion tripwire is scoped to WR and TE (the
+    positions the pre-registration names -- 2x RB's exploratory +0.001 would
+    condemn noise) but reads BOTH targets, since the exploratory convention
+    is closer to raw points; "decisions move" requires the PAR interval to
+    sit ABOVE zero, not merely exclude it, so a significantly harmful move
+    cannot print as success; and a significantly negative R² delta is named
+    rather than folded into "covers zero".
+
+    Survival is judged on `rank_confirm` -- the pool with the discovery
+    season removed -- because a hypothesis discovered on 2025 does not get to
+    call 2025 part of its own confirmation. The suspicion tripwire reads the
+    FULL pools on purpose: 2025 is the one season the snapshot alignment
+    exists in, so a leak there inflates the full pool, and diluted evidence
+    of a leak should still fire."""
+    def _above_zero(summary: dict) -> dict:
+        return {
+            p: s for p, s in summary.items()
+            if not np.isnan(s["ci_lo"]) and s["ci_lo"] > 0 and s["delta_mean"] > 0
+        }
+
+    survives = _above_zero(rank_confirm)
+    harmful = {
+        p: s for p, s in rank_confirm.items()
+        if not np.isnan(s["ci_hi"]) and s["ci_hi"] < 0
+    }
+    suspicious = {
+        (p, target): s
+        for target, summary in (("rank", rank_summary), ("raw points", points_summary))
+        for p, s in _above_zero(summary).items()
+        if p in ("WR", "TE")
+        and s["delta_mean"] > R2_SUSPICION_FACTOR * EXPLORATORY_DELTA[p]
+    }
+    par_helps = not np.isnan(arm_par["ci_lo"]) and arm_par["ci_lo"] > 0
+    par_hurts = not np.isnan(arm_par["ci_hi"]) and arm_par["ci_hi"] < 0
 
     lines: list[str] = []
     if arm_fwd3["mean_diff"] >= W.LEAKAGE_TRIPWIRE_PPG or (
@@ -588,8 +697,9 @@ def verdict(
         ]
     if suspicious:
         names = ", ".join(
-            f"{p} ({s['delta_mean']:+.3f} against +{EXPLORATORY_DELTA[p]:.3f} exploratory)"
-            for p, s in suspicious.items()
+            f"{p} on the {target} target "
+            f"({s['delta_mean']:+.3f} against +{EXPLORATORY_DELTA[p]:.3f} exploratory)"
+            for (p, target), s in suspicious.items()
         )
         return "SUSPICIOUSLY LARGE -- CHECK THE ALIGNMENT", [
             f"The walk-forward delta came back more than {R2_SUSPICION_FACTOR:.0f}x "
@@ -601,21 +711,46 @@ def verdict(
 
     if not survives:
         name = "NULL -- THE EXPLORATORY GAIN DOES NOT SURVIVE WALK-FORWARD"
+        if harmful:
+            coverage = (
+                "covers zero at every position except "
+                + ", ".join(
+                    f"{p} ({s['delta_mean']:+.3f} "
+                    f"[{s['ci_lo']:+.3f}, {s['ci_hi']:+.3f}])"
+                    for p, s in sorted(harmful.items())
+                )
+                + ", where the feature measurably *hurts*"
+            )
+        else:
+            coverage = "covers zero at every position"
         lines.append(
-            "Across twelve replay seasons with models refitted on strictly "
-            "prior data, adding the depth chart features moves out-of-sample "
-            "R² on the rank objective by an amount whose interval covers zero "
-            "at every position. The within-season +0.03 at WR and TE was the "
-            "split being easy, not the feature being real. Per the ground "
-            "rules: the feature is not kept."
+            "Across the confirmatory replay seasons -- 2014-2024, models "
+            "refitted on strictly prior data, with 2025 excluded because the "
+            "hypothesis was discovered on it and shown separately -- adding "
+            "the depth chart features moves out-of-sample R² on the rank "
+            "objective -- the objective the models are fitted and served on "
+            f"-- by an amount whose interval {coverage}. The full pool "
+            "including 2025 says the same. The within-season +0.03 at WR and "
+            "TE was the split being easy, not the feature being real. Per "
+            "the ground rules: the feature is not kept."
         )
-    elif decisions_move:
+        lines.append(points_reading(points_summary))
+    elif par_hurts:
+        name = "R² SURVIVES; DECISIONS MOVE THE WRONG WAY"
+        lines.append(
+            f"The R² gain survives walk-forward at {', '.join(sorted(survives))} "
+            "-- and the depth chart arm's PAR margin over its base version sits "
+            "significantly *below* zero. Better scores, worse claims. The "
+            "feature is not kept."
+        )
+    elif par_helps:
         name = "SURVIVES, AND MOVES DECISIONS"
         lines.append(
             f"The R² gain survives walk-forward at "
             f"{', '.join(sorted(survives))} and the depth chart arm's PAR "
-            "margin over the base arm excludes zero. Both bars cleared; see "
-            "the tables for sizes."
+            "margin over the base arm sits above zero. Both bars cleared; see "
+            "the tables for sizes -- and note the multiplicity caveat under "
+            "the pooled table before repeating the headline."
         )
     else:
         name = "R² SURVIVES; DECISIONS DO NOT MOVE"
@@ -627,13 +762,17 @@ def verdict(
 
     lines.append(
         f"The two repo arms surface **identical top-{ARM_DEPTH} claims in "
-        f"{agreement['identical_share']:.0%} of paired weeks** "
-        f"({agreement['identical_weeks']} of {agreement['weeks']}), with "
-        f"{agreement['name_overlap']:.0%} name overlap overall. On points "
-        f"above replacement the depth chart arm moves the repo arm by "
-        f"{arm_par['mean_diff']:+.2f} ppg against its base version "
-        f"({CI_LEVEL:.0%} CI [{arm_par['ci_lo']:+.2f}, {arm_par['ci_hi']:+.2f}], "
-        f"n = {arm_par['n_weeks']} weeks)."
+        f"only {agreement['identical_share']:.0%} of paired weeks** "
+        f"({agreement['identical_weeks']} of {agreement['weeks']}), agree on "
+        f"the **#1 claim -- the one actually made -- in "
+        f"{agreement['top1_same_share']:.0%}** of them, with "
+        f"{agreement['name_overlap']:.0%} name overlap overall -- so the "
+        f"feature changes plenty of *names*. What it does not change is "
+        f"*results*: on points above replacement the depth chart arm moves "
+        f"the repo arm by {arm_par['mean_diff']:+.2f} ppg against its base "
+        f"version ({CI_LEVEL:.0%} CI [{arm_par['ci_lo']:+.2f}, "
+        f"{arm_par['ci_hi']:+.2f}], n = {arm_par['n_weeks']} weeks). Reshuffled "
+        f"picks, indistinguishable outcomes."
     )
     return name, lines
 
@@ -659,6 +798,9 @@ def write_markdown(
     weekly = week_means(picks)
     rank_summary = r2_summary(r2, "fwd3_rank")
     points_summary = r2_summary(r2, "fwd3")
+    discovery = REPLAY_SEASONS[-1]        # 2025: the hypothesis was found on it
+    rank_confirm = r2_summary(r2, "fwd3_rank", exclude_season=discovery)
+    points_confirm = r2_summary(r2, "fwd3", exclude_season=discovery)
     agreement = pick_agreement(picks, HEADLINE_WEEKS)
 
     dc_vs_base_par = bucket(weekly, "repo_dc", "repo_base", HEADLINE_WEEKS, "mean_par")
@@ -669,7 +811,10 @@ def write_markdown(
     base_vs_naive_fwd3 = bucket(weekly, "repo_base", "naive", HEADLINE_WEEKS, "mean_fwd3")
     base_vs_naive_par = bucket(weekly, "repo_base", "naive", HEADLINE_WEEKS, "mean_par")
 
-    name, qualifiers = verdict(rank_summary, dc_vs_base_par, dc_vs_naive_fwd3, agreement)
+    name, qualifiers = verdict(
+        rank_summary, rank_confirm, points_summary,
+        dc_vs_base_par, dc_vs_naive_fwd3, agreement,
+    )
 
     L: list[str] = []
     add = L.append
@@ -706,25 +851,49 @@ def write_markdown(
     add("")
     add(
         "| position | R² usage only | + depth chart | Δ (mean of per-season) | "
-        f"{CI_LEVEL:.0%} CI on Δ | seasons Δ>0 | exploratory Δ |"
+        f"{CI_LEVEL:.0%} CI on Δ | seasons Δ>0 | Δ excl. 2025 | CI excl. 2025 | "
+        "exploratory Δ |"
     )
-    add("| --- | ---: | ---: | ---: | :---: | ---: | ---: |")
+    add("| --- | ---: | ---: | ---: | :---: | ---: | ---: | :---: | ---: |")
     for position in M.POSITIONS:
         s = rank_summary[position]
+        c = rank_confirm[position]
         exploratory = (
             f"+{EXPLORATORY_DELTA[position]:.3f}" if position in EXPLORATORY_DELTA else "--"
         )
         add(
             f"| {position} | {fmt(s['base_mean'])} | {fmt(s['dc_mean'])} | "
             f"{s['delta_mean']:+.3f} | [{s['ci_lo']:+.3f}, {s['ci_hi']:+.3f}] | "
-            f"{s['positive_seasons']}/{s['n_seasons']} | {exploratory} |"
+            f"{s['positive_seasons']}/{s['n_seasons']} | {c['delta_mean']:+.3f} | "
+            f"[{c['ci_lo']:+.3f}, {c['ci_hi']:+.3f}] | {exploratory} |"
         )
+    add("")
+    add(
+        f"The excl.-{discovery} columns matter for a reason stated before the "
+        f"run: {discovery} is the season the hypothesis was *discovered* on, "
+        "and a discovery sample inside its own confirmation pool biases the "
+        "pool toward confirming. The without-2025 pool is the confirmatory "
+        "number; the full pool is shown because eleven honest seasons plus "
+        "one tainted one is still worth seeing next to it."
+    )
     add("")
     add(
         "The exploratory column is the 2025 within-season split that motivated "
         "this run. Its *levels* are not comparable to these -- different split, "
-        "different target convention -- only its deltas are on the table for "
-        "comparison, and the comparison is against the Δ column."
+        "different target convention -- and even its deltas cross a convention "
+        "boundary, which is why the raw-points table below is computed too: "
+        "that is the nearer comparison."
+    )
+    add("")
+    add(
+        "One caveat that applies to every interval on this page: eight "
+        "uncorrected per-position tests (four positions, two targets) run on "
+        "twelve paired seasons each. Under a global null, roughly one of "
+        "eight such intervals excludes zero by chance alone, and n=12 "
+        "percentile-bootstrap intervals under-cover their nominal "
+        f"{CI_LEVEL:.0%} to begin with. Any single interval excluding zero "
+        "is weak evidence; agreement across seasons, targets and the arm "
+        "comparison is what would count."
     )
     add("")
 
@@ -760,22 +929,25 @@ def write_markdown(
     add("")
     add(
         "The same fits with raw `fwd3` as the target, which is closer to what "
-        "the exploratory numbers were computed on. Same story or it is worth "
-        "saying so:"
+        "the exploratory numbers were computed on:"
     )
     add("")
     add(
         f"| position | R² usage only | + depth chart | Δ | {CI_LEVEL:.0%} CI on Δ | "
-        "seasons Δ>0 |"
+        "seasons Δ>0 | Δ excl. 2025 | CI excl. 2025 |"
     )
-    add("| --- | ---: | ---: | ---: | :---: | ---: |")
+    add("| --- | ---: | ---: | ---: | :---: | ---: | ---: | :---: |")
     for position in M.POSITIONS:
         s = points_summary[position]
+        c = points_confirm[position]
         add(
             f"| {position} | {fmt(s['base_mean'])} | {fmt(s['dc_mean'])} | "
             f"{s['delta_mean']:+.3f} | [{s['ci_lo']:+.3f}, {s['ci_hi']:+.3f}] | "
-            f"{s['positive_seasons']}/{s['n_seasons']} |"
+            f"{s['positive_seasons']}/{s['n_seasons']} | {c['delta_mean']:+.3f} | "
+            f"[{c['ci_lo']:+.3f}, {c['ci_hi']:+.3f}] |"
         )
+    add("")
+    add(points_reading(points_summary))
     add("")
 
     # ---- the arm comparison ----------------------------------------------
@@ -814,7 +986,11 @@ def write_markdown(
         "`repo base − naive` is the control pair: it re-derives the prior "
         "replays' comparison inside this run, so a surprise there would mean "
         "this script disagrees with `walkforward_2014_2025.md` about the "
-        "baseline, and nothing else in the table could be trusted."
+        "baseline, and nothing else in the table could be trusted. `†` would "
+        "mark an interval whose season stratification had to fall back to "
+        "unstratified resampling (a bucket giving some season a single week); "
+        "none of these buckets need it, and the marker is defined here so it "
+        "cannot appear undefined."
     )
     add("")
     add("### Pick agreement")
@@ -932,8 +1108,15 @@ def write_markdown(
         "The exploratory versions of these were: TE listed starters 7.97 ppg "
         "against a 4.18 baseline; rank-improvement rho 0.05; \"promoted to "
         "starter this week\" firing 11 times at TE and zero at RB and WR in "
-        "2025. Directionally reproduced or not, the table above is the record "
-        "under this alignment."
+        "2025. (Exact counts differ because the alignments differ; this table "
+        "is the record under this one.) The *shape* of the exploratory "
+        "reading reproduces: listed starters clear their positional pool "
+        "everywhere the level is measurable, the movement correlation is "
+        "near zero, and promotions onto the wire are too rare to model. "
+        "Where he sits is real information about raw points -- it is just "
+        "not *additional* information once the usage features have already "
+        "said where he sits, which is what the walk-forward tables above "
+        "measure and the within-season split could not."
     )
     add("")
 
@@ -1047,10 +1230,15 @@ def write_markdown(
         "- **Contamination.** EB priors and the rank-to-points scale are "
         "fitted on training seasons only; replay bundles are stamped "
         "`replay_only` in `outputs/backtests/replay_models_dc/` and "
-        "`src.models.load_bundle` cannot reach them. The un-closable leak is "
-        "the same one as always: every constant in the pipeline was chosen by "
-        "someone who had seen these seasons, and now so was the depth chart "
-        "alignment rule."
+        "`src.models.load_bundle` cannot reach them. Two leaks are named "
+        "rather than closed. First, the discovery-season overlap: 2025 is "
+        "both the season the hypothesis was found on and a replay season, "
+        "and its evaluation rows (weeks 2-14, wire universe) are exactly the "
+        "rows that generated the hypothesis -- not a train/test leak, but a "
+        "selection one, which is why the verdict is judged on the 2014-2024 "
+        "pool and 2025 is shown separately. Second, the usual one: every "
+        "constant in the pipeline was chosen by someone who had seen these "
+        "seasons, and now so was the depth chart alignment rule."
     )
     add("")
     if notes:
@@ -1065,9 +1253,14 @@ def write_markdown(
     add(
         "Tested in the same exploratory pass that raised the depth chart "
         "hypothesis (2025, within-season split), and recorded here so nobody "
-        "rebuilds it. nflverse `injuries_{year}.csv` -- the official practice "
-        "and game-status reports -- added **exactly +0.000 R² at all four "
-        "positions**, and the reason is structural rather than statistical:"
+        "rebuilds it. The numbers in this section are **transcribed from "
+        "that session, not computed by this script** -- deliberately, and "
+        "against this repo's usual convention, because reproducing them "
+        "would mean building the injury pipeline this section exists to "
+        "close the door on. nflverse `injuries_{year}.csv` -- the official "
+        "practice and game-status reports -- added **exactly +0.000 R² at "
+        "all four positions**, and the reason is structural rather than "
+        "statistical:"
     )
     add("")
     add(

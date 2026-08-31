@@ -319,10 +319,16 @@ def _dc_week_cutoffs(season: int, games: pd.DataFrame) -> pd.Series:
     first game day, not the club's own: a Thursday or international kickoff
     anywhere tightens the cutoff for every club that week, which loses Sunday
     teams their Friday and Saturday chart updates and guarantees that no
-    snapshot taken after any of the week's games can be assigned to it. The
-    date boundary rather than kickoff time keeps the comparison in one clock:
-    `dt` is UTC, `gameday` is a local date, and midnight UTC on the game day
-    is still the evening before kickoff everywhere the NFL plays.
+    snapshot taken after any of the week's games can be assigned to it.
+
+    The date boundary rather than kickoff time keeps the comparison in one
+    clock. `dt` is UTC; `gameday` in nfldata is anchored to US/Eastern (the
+    2026 Melbourne opener is recorded under its Eastern date, not its
+    Friday-local one), so 00:00 UTC on a gameday is 7-8pm Eastern the evening
+    before, and every kickoff -- London and Melbourne included -- lands hours
+    after it. Checked against the schedule rather than assumed: across every
+    regular-season game in games.csv (2000-2026), no kickoff precedes its own
+    gameday's midnight UTC; the closest margin is about 13 hours.
     """
     rows = games[(games["season"] == season) & (games["game_type"] == "REG")]
     first = rows.groupby("week")["gameday"].min()
@@ -401,6 +407,12 @@ def load_depth_charts(
     `dc_rank`, and `dc_rank_prev`, the same player's rank going into the
     previous week. `dc_rank_prev` is player-level rather than player-team so a
     mid-season trade still has a defined "where did he sit last week".
+
+    The weekly-format files carry one phantom REG-labelled submission past
+    each season's final week (all 32 clubs file a week-18 chart in a 17-week
+    season). Those rows survive here and are harmless: the panel has no
+    week-18 rows for such a season to join them to, and `dc_rank_prev` for a
+    real week only ever looks one week back, never forward.
     """
     games = None
     frames = []
@@ -414,9 +426,9 @@ def load_depth_charts(
         require_rows(dc, path)
         if "dt" in dc.columns:
             if games is None:
-                games = pd.read_csv(
-                    games_path or (RAW_DIR / "games.csv"), low_memory=False
-                )
+                games_file = Path(games_path or (RAW_DIR / "games.csv"))
+                games = pd.read_csv(games_file, low_memory=False)
+                require_rows(games, games_file)
             ranks = _dc_ranks_snapshots(dc, _dc_week_cutoffs(year, games))
         else:
             ranks = _dc_ranks_weekly(dc)
