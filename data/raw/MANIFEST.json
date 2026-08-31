@@ -1,8 +1,73 @@
 {
   "files": {
+    "depth_charts_2013.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2013.csv",
+      "sha256": "68a48cb5c3488aa505c2612c21797353c794c9ce5094e5071cc866373e71fd71",
+      "bytes": 3402741
+    },
+    "depth_charts_2014.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2014.csv",
+      "sha256": "37c5d02473ebec605aaf68747a50ec77f02347f68f16e69cb5d84862f75c6d3a",
+      "bytes": 2991003
+    },
+    "depth_charts_2015.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2015.csv",
+      "sha256": "7c8e3fc562a112faf76e093f36b2a81f6adc731a55d7d52e363f9d2d9b95b0d9",
+      "bytes": 3404905
+    },
+    "depth_charts_2016.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2016.csv",
+      "sha256": "1a462b965a31f70a76568e0900485cec7f6ab202ade15df0a2d0d79f4ffc7537",
+      "bytes": 3366662
+    },
+    "depth_charts_2017.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2017.csv",
+      "sha256": "cc8a9e6991236510ada3fd1a71ed0ebd3df91f2130c8abbf11e69150adc0eb7d",
+      "bytes": 3367336
+    },
+    "depth_charts_2018.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2018.csv",
+      "sha256": "2c44efb1d96f8b8fef8a8ae42c44db340e97921745420d96b012778e184255bb",
+      "bytes": 3365843
+    },
+    "depth_charts_2019.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2019.csv",
+      "sha256": "328405d1feb09cc4b23922c26bf23adf7d6a6e894ba0e7305b88dda793710647",
+      "bytes": 3335603
+    },
+    "depth_charts_2020.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2020.csv",
+      "sha256": "45a315dd7f3e7837faf06a9c9cf995e1c131017a748482b2caaa111ffa0b9372",
+      "bytes": 3327076
+    },
+    "depth_charts_2021.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2021.csv",
+      "sha256": "91e3384ff13146c77f02fed2c3eca163d35868dd62da6b794c5b51df1d15b724",
+      "bytes": 3447809
+    },
+    "depth_charts_2022.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2022.csv",
+      "sha256": "4c64ee59666431c49cbc0a818cc3165886012cf72b545771a77c0805aa621b9c",
+      "bytes": 3467936
+    },
+    "depth_charts_2023.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2023.csv",
+      "sha256": "583f83842590e7e7d3417e0cd9c5c9e38f8696353bb754561d80e5583d2a98cf",
+      "bytes": 3426502
+    },
+    "depth_charts_2024.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2024.csv",
+      "sha256": "f210a33774611f7f78a89af789b61c6289a2631a21227a1a3c63c973c23588b7",
+      "bytes": 3391616
+    },
+    "depth_charts_2025.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2025.csv",
+      "sha256": "f5a4aa3fa70150e810b2255200c8735a6c1cc8ff77361308ce39149345b39b4a",
+      "bytes": 52917870
+    },
     "games.csv": {
       "url": "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv",
-      "sha256": "213a391007021dc3352e224e797f2a1f604ace7b3c91dfc098f799b7b891d12d",
+      "sha256": "81ca204bc1ee8e79006aa55bcfcfcad1052eaeca18b56f381ba40edcca51eb51",
       "bytes": 2177173
     },
     "play_by_play_2013.csv.gz": {

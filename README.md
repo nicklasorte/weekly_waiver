@@ -78,7 +78,15 @@ All from [nflverse](https://github.com/nflverse):
 | `snap_counts_{year}.csv` | nflverse-data release `snap_counts` |
 | `stats_player_week_{year}.csv` | nflverse-data release `stats_player` |
 | `play_by_play_{year}.csv.gz` | nflverse-data release `pbp` |
+| `depth_charts_{year}.csv` | nflverse-data release `depth_charts` |
 | `games.csv` | `nflverse/nfldata` |
+
+Depth charts exist from 2001, so they do not move the project's 2013 data
+floor (snap counts set it). The format breaks at 2025 — weekly club
+submissions before, timestamped roster snapshots after — and
+`src/features.py` documents how each is aligned to weeks. See
+`outputs/diagnostics/depth_charts.md` for the validation and the verdict on
+whether the models should use them.
 
 ## MANIFEST.json
 
