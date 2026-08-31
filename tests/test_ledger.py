@@ -521,3 +521,23 @@ class ParScoringTest(unittest.TestCase):
         weekly = week_means(graded).set_index("arm")
         self.assertAlmostEqual(weekly.loc["repo", "mean_fwd3"], 14.0)
         self.assertAlmostEqual(weekly.loc["repo", "mean_par"], 13.0)
+
+
+class HeadToHeadNaNTest(unittest.TestCase):
+    def test_a_week_with_no_par_is_not_scored_as_a_loss(self):
+        # `np.nan > x` is False. Counting an unpriceable week as a week the arm
+        # lost would understate every contender against the benchmark, quietly
+        # and in one direction.
+        weekly = pd.DataFrame([
+            {"season": 2025, "week": 8, "arm": "naive", "order_status": "clean",
+             "n": 3, "mean_par": 1.0, "mean_fwd3": 10.0, "week_ceiling": 20.0},
+            {"season": 2025, "week": 8, "arm": "repo", "order_status": "clean",
+             "n": 3, "mean_par": 5.0, "mean_fwd3": 12.0, "week_ceiling": 20.0},
+            {"season": 2025, "week": 9, "arm": "naive", "order_status": "clean",
+             "n": 3, "mean_par": 1.0, "mean_fwd3": 10.0, "week_ceiling": 20.0},
+            {"season": 2025, "week": 9, "arm": "repo", "order_status": "clean",
+             "n": 3, "mean_par": np.nan, "mean_fwd3": 12.0, "week_ceiling": 20.0},
+        ])
+        summary = arm_summary(weekly).set_index("arm")
+        # One priceable week, which repo won. Not two, of which it won one.
+        self.assertAlmostEqual(summary.loc["repo", "beat_naive_share"], 1.0)

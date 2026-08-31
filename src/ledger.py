@@ -701,7 +701,13 @@ def arm_summary(weekly: pd.DataFrame) -> pd.DataFrame:
                 (m, naive.get((s, w)))
                 for s, w, m in zip(rows["season"], rows["week"], rows["mean_par"])
             ]
-            pairs = [(a, b) for a, b in pairs if b is not None and not pd.isna(b)]
+            # Drop a week where either side has no PAR, not just the benchmark
+            # side. `np.nan > x` is False, so filtering only `b` would score a
+            # week the arm could not be priced in as a week it lost.
+            pairs = [
+                (a, b) for a, b in pairs
+                if b is not None and not pd.isna(b) and not pd.isna(a)
+            ]
             beat = float(np.mean([a > b for a, b in pairs])) if pairs else np.nan
         out.append(
             {
