@@ -18,13 +18,15 @@ No model was refitted to answer the first question — the picks from `replay_fu
 | --- | ---: | :---: | ---: | ---: |
 | `fwd3` — raw fantasy points, no baseline (the prior headline) | -2.30 | [-3.12, -1.47] | +2.13 | +0.17 |
 | `vs_pos` — the position pool's mean fwd3 that week | -0.12 | [-0.84, +0.63] | +0.00 | +0.12 |
-| `par` — the rank-R **realised** fwd3 -- the headline PAR **(headline)** | +1.74 | [+1.05, +2.45] | -1.80 | +0.06 |
+| `par` — the rank-R **realised** fwd3 — the metric asked for **(headline)** | +1.74 | [+1.05, +2.45] | -1.80 | +0.06 |
 | `par_std` — rank-R by season-to-date standing, valued at his realised fwd3 | +1.60 | [+0.75, +2.48] | -1.35 | -0.25 |
 | `par_pts` — rank-R by last week's points, valued at his realised fwd3 | +0.98 | [+0.01, +1.96] | -1.12 | +0.14 |
 
 Same 156 paired weeks, same picks, same realised points in every row. Only the subtracted constant differs. Positive favours the repo arm.
 
-The two `par_*` rows price the hindsight in the headline baseline: they rank the pool by something knowable on the Monday — season-to-date standing, or last week's points — and take *that* player's realised `fwd3`. The headline baseline is +0.14 ppg and +0.76 ppg more generous to the repo arm than those, which is the size of the hindsight and is larger than this measurement's resolution.
+The two `par_*` rows price the hindsight in the headline baseline. It is an order statistic of what the pool *turned out* to deliver at rank R, which nobody could have chosen; those two rank the pool by something knowable on the Monday — season-to-date standing, or last week's points — and take *that* player's realised `fwd3` instead.
+
+The headline baseline is +0.14 ppg more generous to the repo arm than the first and +0.76 than the second. The first is inside the ±0.3 ppg this measurement can resolve and should not be read as a difference; the second is not, and is roughly half the headline margin. Which ordering is the right counterfactual is a judgement — `pts` is also the naive arm's own selection key, so it is not neutral in appearance even though the baseline it produces is applied identically to both arms — so all three are shown rather than one being chosen.
 
 ### Why the mix term inverted instead of collapsing
 
@@ -53,9 +55,9 @@ Within position, over the same walk-forward weeks. **Positive means the model is
 
 **KEEP THEM — BUT FOR THE LIST, NOT THE TOP NAME.**
 
-**The model's single best name at a position is not better than a one-liner's single best name.** At k=1 it is indistinguishable from 3 of 4 arms that are actually choosing: `hot_hand_pos` +0.15 [-0.45, +0.73], `opp` +0.09 [-0.43, +0.60], `eb_share` -0.03 [-0.57, +0.50]. Sorting the position's wire by shrunk target share, or by last week's points, names a first player as good as the model's.
+**The model's single best name at a position is not better than a one-liner's single best name.** At k=1 it is indistinguishable from 3 of 4 arms that are actually choosing: `opp` +0.09 [-0.43, +0.60], `eb_share` -0.03 [-0.57, +0.50], `hot_hand_pos` +0.15 [-0.45, +0.73]. Sorting the position's wire by shrunk target share, or by last week's points, names a first player as good as the model's.
 
-**Its third name is better, and every arm agrees.** At rank 3 the model is ahead of all 4 of them: `hot_hand_pos` +0.93 [+0.40, +1.46], `opp` +1.23 [+0.68, +1.82], `snap` +0.82 [+0.29, +1.35], `eb_share` +0.93 [+0.43, +1.44]. That is not the k=1 test being underpowered — rank 1 of this run *is* the k=1 arm, same key and same player — so the arms genuinely differ in how they hold up down the list. The one-liners degrade; the model does not.
+**Its third name is better, and every arm agrees.** At rank 3 the model is ahead of all 4 of them: `opp` +1.23 [+0.68, +1.82], `snap` +0.82 [+0.29, +1.35], `eb_share` +0.93 [+0.43, +1.44], `hot_hand_pos` +0.93 [+0.40, +1.46]. That is not the k=1 test being underpowered — rank 1 of this run *is* the k=1 arm, same key and same player — so the arms genuinely differ in how they hold up down the list. The one-liners degrade; the model does not.
 
 **Recommendation: keep `models/`.** What it buys is a ranked list rather than a best guess, and a candidate table is a ranked list — `assign_tiers` puts out two burn names, three fallbacks and four to watch. If the product were a single weekly claim, the honest answer would be to delete the models and sort on one column; it is not.
 

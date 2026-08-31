@@ -294,7 +294,7 @@ def replacement_table(depth_scale: float = 1.0) -> pd.DataFrame:
 BASELINES = {
     "fwd3": (None, "raw fantasy points, no baseline (the prior headline)"),
     "vs_pos": ("pool_mean", "the position pool's mean fwd3 that week"),
-    "par": ("repl_fwd3", "the rank-R **realised** fwd3 -- the headline PAR"),
+    "par": ("repl_fwd3", "the rank-R **realised** fwd3 — the metric asked for"),
     "par_std": (
         "decision_rank_before",
         "rank-R by season-to-date standing, valued at his realised fwd3",
@@ -1193,13 +1193,23 @@ def write_markdown(scored: pd.DataFrame, ablation: pd.DataFrame,
         "every row. Only the subtracted constant differs. Positive favours the "
         "repo arm.")
     add("")
-    add("The two `par_*` rows price the hindsight in the headline baseline: they "
-        "rank the pool by something knowable on the Monday — season-to-date "
-        "standing, or last week's points — and take *that* player's realised "
-        f"`fwd3`. The headline baseline is {signed(par['mean_diff'] - results['par_std']['mean_diff'])} "
-        f"ppg and {signed(par['mean_diff'] - results['par_pts']['mean_diff'])} ppg "
-        "more generous to the repo arm than those, which is the size of the "
-        "hindsight and is larger than this measurement's resolution.")
+    std_gap = par["mean_diff"] - results["par_std"]["mean_diff"]
+    pts_gap = par["mean_diff"] - results["par_pts"]["mean_diff"]
+    add("The two `par_*` rows price the hindsight in the headline baseline. It "
+        "is an order statistic of what the pool *turned out* to deliver at rank "
+        "R, which nobody could have chosen; those two rank the pool by something "
+        "knowable on the Monday — season-to-date standing, or last week's points "
+        "— and take *that* player's realised `fwd3` instead.")
+    add("")
+    add(f"The headline baseline is {signed(std_gap)} ppg more generous to the "
+        f"repo arm than the first and {signed(pts_gap)} than the second. The "
+        f"first is inside the ±{NOISE_FLOOR_PPG:.1f} ppg this measurement can "
+        "resolve and should not be read as a difference; the second is not, and "
+        "is roughly half the headline margin. Which ordering is the right "
+        "counterfactual is a judgement — `pts` is also the naive arm's own "
+        "selection key, so it is not neutral in appearance even though the "
+        "baseline it produces is applied identically to both arms — so all three "
+        "are shown rather than one being chosen.")
     add("")
 
     add("### Why the mix term inverted instead of collapsing")
