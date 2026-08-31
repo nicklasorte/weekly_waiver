@@ -288,13 +288,21 @@ selection term — the only part about ranking — is +0.17 on raw points, +0.12
 the pool mean and **+0.06 on PAR**. A null under every baseline. The metric is
 still the right one to score with; it is not evidence about the ranking.
 
-**The model beats a one-liner at depth, not at the top.** Within position, its
-single best name is indistinguishable from sorting on shrunk target share
-(-0.03 [-0.57, +0.50]), on last week's points (+0.15 [-0.45, +0.73]) or on
-opportunity count (+0.09 [-0.43, +0.60]). Its *third* name is better than all
-of them (+0.93, +0.93, +1.23). The one-liners fall 1.6-2.1 ppg from their first
-name to their third; the model falls 0.8. **Keep `models/` — for the ranked
-list, which is what a candidate table is, and not for the top name.**
+**The model beats a one-liner in the middle of the list, and nowhere else.**
+Within position, its single best name is indistinguishable from sorting on
+shrunk target share (-0.03 [-0.57, +0.50]), on last week's points (+0.15
+[-0.45, +0.73]) or on opportunity count (+0.09 [-0.43, +0.60]). Its *third* name
+is better than all of them (+0.93, +0.93, +1.23). By the fifth, every interval
+covers zero again, and from rank 3 to rank 5 the model falls faster than any
+one-liner. Over a whole list it is still ahead — +0.30 to +0.67 ppg at five
+names — but that is small, two of those clear the ±0.3 resolution by under 0.1,
+and each arm's deficit comes from one or two positions rather than from the
+model being better throughout.
+
+**Keep `models/`, narrowly — for the list, not the top name.** A candidate
+table is a ranked list, so the pooled number is the one that matters and it is
+positive. It does not say the model finds better players, and it does not say
+the advantage grows with depth: it shrinks.
 
 Within a position PAR and raw `fwd3` are the same comparison exactly, since the
 baseline is one constant per cell; the write-up asserts that rather than

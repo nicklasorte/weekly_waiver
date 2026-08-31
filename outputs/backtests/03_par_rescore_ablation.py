@@ -174,10 +174,13 @@ TIE_FLAG_RATE = 0.5
 #
 # `eb_share` has no QB branch. Shrunk target share and shrunk carry share are
 #   both meaningless for a quarterback, and substituting snap share there does
-#   not make a fourth arm -- it makes a second copy of `snap`, which was
-#   measured at 100% identical picks in all 156 QB cells. A forced tie reported
-#   as agreement is the error this project keeps catching; it is not committed
-#   here. The arm is N/A at quarterback and pooled over RB/WR/TE.
+#   not make a fourth arm -- it makes a second copy of `snap`, identical *by
+#   construction*: same column, same tiebreak, therefore the same player in every
+#   cell. Nothing here measures that, because the arm is never generated at
+#   quarterback and so leaves no rows to compare; the claim is read off the two
+#   definitions rather than off a number. A forced tie reported as agreement is
+#   the error this project keeps catching, and it is not committed here: the arm
+#   is N/A at quarterback and pooled over RB/WR/TE.
 HEURISTICS = {
     "hot_hand_pos": {
         "keys": {"QB": "pts", "RB": "pts", "WR": "pts", "TE": "pts"},
@@ -208,7 +211,12 @@ ABLATION_ARMS = ["model"] + list(HEURISTICS)
 # k=3 is either better power from averaging three picks or a real difference in
 # how the arms degrade with depth, and those are not the same claim. `rank_table`
 # separates them, so neither has to be assumed.
-ABLATION_DEPTHS = (1, 3)
+#
+# k=5 is run because k=3 alone cannot tell "the model holds up down the list"
+# from "the model is better at the third name". Those imply different things
+# about a candidate table and the first is the more flattering, so it does not
+# get assumed on three ranks of evidence.
+ABLATION_DEPTHS = (1, 3, 5)
 HEADLINE_DEPTH = 3
 
 
@@ -510,12 +518,17 @@ def decompose(picks: pd.DataFrame, metric: str) -> dict:
                 sum(weights[p] * (means[p] - mu[p]) for p in positions if weights[p])
             ),
         }
-    out["gap"] = out["naive"]["mean"] - out["repo"]["mean"]
+    # Oriented repo minus naive, matching the headline column, so one sign
+    # convention covers the whole table. `01_season_replay.decompose` returns
+    # naive minus repo; reporting its output next to a repo-minus-naive headline
+    # reads every component backwards, and under PAR that reverses the direction
+    # of the mechanism the section exists to explain.
+    out["gap"] = out["repo"]["mean"] - out["naive"]["mean"]
     out["mix"] = float(
-        sum((out["naive"]["weights"][p] - out["repo"]["weights"][p]) * mu[p]
+        sum((out["repo"]["weights"][p] - out["naive"]["weights"][p]) * mu[p]
             for p in positions)
     )
-    out["selection_gap"] = out["naive"]["selection"] - out["repo"]["selection"]
+    out["selection_gap"] = out["repo"]["selection"] - out["naive"]["selection"]
     residual = abs(out["gap"] - (out["mix"] + out["selection_gap"]))
     if residual > 1e-9:
         raise SystemExit(
@@ -795,7 +808,7 @@ def tie_rates(picks: pd.DataFrame) -> pd.DataFrame:
     rows = rows[rows["rank_within_arm"] == rows["depth"]]
     table = (
         rows.assign(decided_by_name=rows["tie_at_cut"] > rows["depth"])
-        .groupby(["arm", "position"], as_index=False)
+        .groupby(["arm", "position", "depth"], as_index=False)
         .agg(tie_rate=("decided_by_name", "mean"),
              distinct_at_cut=("tie_at_cut", "mean"),
              cells=("tie_at_cut", "size"))
@@ -1043,7 +1056,30 @@ def par_verdict(results: dict[str, dict]) -> tuple[str, list[str]]:
     return name, lines
 
 
-def clean_arms(ties: pd.DataFrame) -> set[str]:
+def ordinal(n: int) -> str:
+    return {1: "first", 2: "second", 3: "third", 4: "fourth",
+            5: "fifth"}.get(n, f"{n}th")
+
+
+def _model_levels(picks: pd.DataFrame, depth: int) -> pd.Series:
+    """Mean PAR of the model's pick at each rank, over the headline weeks."""
+    rows = picks[(picks["depth"] == depth) & (picks["arm"] == "model")
+                 & picks["week"].isin(HEADLINE_WEEKS)]
+    return rows.groupby("rank_within_arm")["par"].mean()
+
+
+def levels_gain(picks: pd.DataFrame, depth: int, rank: int) -> float:
+    """How much the model's level moves into `rank` from the rank above it."""
+    levels = _model_levels(picks, depth)
+    return float(levels.get(rank, np.nan) - levels.get(rank - 1, np.nan))
+
+
+def levels_fall(picks: pd.DataFrame, depth: int, start: int, end: int) -> float:
+    levels = _model_levels(picks, depth)
+    return float(levels.get(start, np.nan) - levels.get(end, np.nan))
+
+
+def clean_arms(ties: pd.DataFrame) -> list[str]:
     """Arms whose picks are theirs rather than the alphabet's, at most positions.
 
     An arm that ties at the cut in a majority of a position's weeks did not
@@ -1125,41 +1161,100 @@ def model_recommendation(picks: pd.DataFrame, ties: pd.DataFrame) -> tuple[str, 
         ] + note
 
     if matched_at_top and len(beaten_deep) == len(clean):
-        fragility = ([] if fragile is None or not survives else [
-            "One of those does not survive scrutiny and the rest do. "
-            f"`{fragile['arm']}`'s margin is carried by a quarterback cell in "
-            "which it is an alphabetical draw rather than a heuristic; drop "
-            f"quarterback and it falls to {signed(fragile['mean_diff'])} "
-            f"{interval(fragile)}, a null. The arms that are choosing at every "
-            f"position hold at {signed(min(r['mean_diff'] for r in survives))} to "
-            f"{signed(max(r['mean_diff'] for r in survives))}. The recommendation "
-            "rests on those, not on beating a coin flip."
-        ])
-        return "KEEP THEM — BUT FOR THE LIST, NOT THE TOP NAME", [
+        # Where the advantage sits across the whole list, not just at its end.
+        # If it peaks at one rank and fades below, "the model holds up down the
+        # list" is the wrong sentence however good the pooled number looks.
+        deepest = max(ABLATION_DEPTHS)
+        profile = rank_table(picks, deepest)
+        by_rank_arm = {}
+        for row in profile:
+            by_rank_arm.setdefault(row["rank"], []).append(row)
+        resolved_ranks = [
+            r for r in sorted(by_rank_arm)
+            if all(readable(a) for a in by_rank_arm[r] if a["arm"] in clean)
+        ]
+        peak = max(sorted(by_rank_arm),
+                   key=lambda r: np.mean([a["mean_diff"]
+                                          for a in by_rank_arm[r]]))
+        fades = [r for r in sorted(by_rank_arm) if r > peak
+                 and r not in resolved_ranks]
+        whole_list = {
+            a["arm"]: a for a in
+            ablation_table(picks[picks["depth"] == deepest])
+        }
+
+        lines = [
             f"**The model's single best name at a position is not better than a "
-            f"one-liner's single best name.** At k=1 it is indistinguishable from "
-            f"{len(matched_at_top)} of {len(clean)} arms that are actually "
-            f"choosing: {listing(matched_at_top)}. Sorting the position's wire by "
-            "shrunk target share, or by last week's points, names a first player "
-            "as good as the model's.",
-            f"**Its third name is better, and every arm agrees.** At rank "
-            f"{HEADLINE_DEPTH} the model is ahead of all "
-            f"{len(beaten_deep)} of them: {listing(beaten_deep)}. That is not the "
-            "k=1 test being underpowered — rank 1 of this run *is* the k=1 arm, "
-            "same key and same player — so the arms genuinely differ in how they "
-            "hold up down the list. The one-liners degrade; the model does not.",
-        ] + fragility + [
-            "**Recommendation: keep `models/`.** What it buys is a ranked list "
-            "rather than a best guess, and a candidate table is a ranked list — "
-            "`assign_tiers` puts out two burn names, three fallbacks and four to "
-            "watch. If the product were a single weekly claim, the honest answer "
-            "would be to delete the models and sort on one column; it is not.",
-            f"That is a narrower claim than the models earning their keep "
-            "outright, and it should not be quoted as one. The version-pinning "
-            "machinery and the refit discipline are justified by a margin of "
-            f"about {np.mean([a['mean_diff'] for a in beaten_deep]):.1f} ppg on "
-            "the third name at a position, and by nothing measured above it.",
-        ] + note
+            f"one-liner's single best name.** At k=1 it is indistinguishable "
+            f"from {len(matched_at_top)} of {len(clean)} arms that are actually "
+            f"choosing: {listing(matched_at_top)}. Those intervals are about "
+            f"{np.mean([a['ci_hi'] - a['ci_lo'] for a in matched_at_top]):.1f} "
+            "ppg wide, so this says the two cannot be separated, not that they "
+            "are equal — a real half-point difference either way would be "
+            "invisible here.",
+
+            f"**Its {ordinal(peak)} name is better, and all {len(clean)} arms "
+            f"agree.** At rank {peak}: {listing(by_rank_arm[peak])}. That is not "
+            "the k=1 test being underpowered — rank 1 of this run *is* the k=1 "
+            "arm, same key and same player — so the arms genuinely differ in how "
+            "they hold up below the top name.",
+        ]
+
+        if fades:
+            deep_rows = [a for a in by_rank_arm[max(fades)] if a["arm"] in clean]
+            lines.append(
+                f"**It does not hold up past that, and the run goes deep enough "
+                f"to see it.** At rank {max(fades)}: {listing(deep_rows)} — "
+                f"{sum(1 for a in deep_rows if covers_zero(a))} of "
+                f"{len(deep_rows)} intervals cover zero. The model's own levels "
+                f"are not monotone (rank {peak - 1} to {peak} it *gains* "
+                f"{abs(levels_gain(picks, deepest, peak)):.2f} ppg) and from "
+                f"rank {peak} to rank {max(by_rank_arm)} it falls "
+                f"{levels_fall(picks, deepest, peak, max(by_rank_arm)):.2f} ppg, "
+                "faster than any one-liner over the same stretch. So the "
+                "advantage is concentrated below the top name and around the "
+                f"{ordinal(peak)}; it is not a trend that keeps paying as the "
+                "list gets longer."
+            )
+
+        lines.append(
+            f"**Recommendation: keep `models/`, on a narrow margin.** Over a "
+            f"list of {HEADLINE_DEPTH} names the model is ahead of every arm "
+            f"({listing(sorted(beaten_deep, key=lambda a: a['mean_diff']))} at "
+            f"rank {peak}); over {deepest} it still is "
+            f"({listing(sorted((whole_list[a] for a in clean), key=lambda a: a['mean_diff']))}). "
+            "A candidate table is a ranked list, not a single name, so that is "
+            "the quantity that matters and it is positive. But it is small, two "
+            f"of those clear ±{NOISE_FLOOR_PPG:.1f} ppg by less than 0.1, and it "
+            "comes from one part of the list rather than from the model being "
+            "better throughout."
+        )
+        lines.append(
+            "**What this does not say.** It does not say the model finds better "
+            "players — at the top name it does not. It does not say the "
+            "advantage grows with depth — it shrinks. And these are "
+            f"{len(clean)} comparisons against one model arm over one set of "
+            "156 weeks, not four independent replications; the four difference "
+            "series are correlated, so 'every arm agrees' is weaker "
+            "corroboration than it sounds."
+        )
+        # An arm whose margin is carried by a position where its own key cannot
+        # separate the picks is not a fourth confirmation, and the count above
+        # would otherwise read as one.
+        fragility = ([] if fragile is None or not survives else [
+            f"**One of those {len(clean)} is not a real confirmation.** "
+            f"`{fragile['arm']}`'s margin is carried by a quarterback cell in "
+            "which its key ties at the cut in almost every week, so the pick is "
+            f"the alphabet's rather than the arm's. Drop quarterback and it "
+            f"falls to {signed(fragile['mean_diff'])} {interval(fragile)}, a "
+            f"null; the {len(survives)} arms that are choosing at every position "
+            f"hold at {signed(min(r['mean_diff'] for r in survives))} to "
+            f"{signed(max(r['mean_diff'] for r in survives))}. Read the count as "
+            f"{len(survives)}, not {len(clean)}."
+        ])
+        return "KEEP THEM, NARROWLY — FOR THE LIST, NOT THE TOP NAME", (
+            lines + fragility + note
+        )
 
     if not beaten_deep:
         return "DELETE THE MODELS", [
@@ -1188,7 +1283,7 @@ def write_markdown(scored: pd.DataFrame, ablation: pd.DataFrame,
 
     head = ablation[ablation["depth"] == HEADLINE_DEPTH]
     pooled = ablation_table(head)
-    ties = tie_rates(head)
+    ties = tie_rates(ablation[ablation["depth"].isin(ABLATION_DEPTHS)])
     overlaps = overlap_matrix(head)
     ranks = rank_table(ablation, HEADLINE_DEPTH)
     rec_name, rec_lines = model_recommendation(ablation, ties)
@@ -1317,81 +1412,114 @@ def write_markdown(scored: pd.DataFrame, ablation: pd.DataFrame,
     for line in rec_lines:
         add(line)
         add("")
-    add(f"### The whole ablation in one table (weeks 2–14, "
-        f"{pooled[0]['n_weeks']} weeks)")
+    add(f"### The ablation (weeks 2–14, {pooled[0]['n_weeks']} weeks)")
     add("")
-    add("Each arm's single best name at a position, then its ranked list of "
-        "three, then that list broken out rank by rank.")
+    deepest = max(ABLATION_DEPTHS)
+    by_depth = {
+        d: {a["arm"]: a for a in ablation_table(ablation[ablation["depth"] == d])}
+        for d in ABLATION_DEPTHS
+    }
+    by_rank = {(a["arm"], a["rank"]): a
+               for a in rank_table(ablation, deepest)}
+    add("**The list, at three depths.** How many names a rule is asked for is a "
+        "choice, so it is varied rather than fixed.")
     add("")
-    top = {a["arm"]: a for a in ablation_table(ablation[ablation["depth"] == 1])}
-    by_rank = {(a["arm"], a["rank"]): a for a in ranks}
-    add("| arm | sorts on | positions | k=1 (best name) | k=3 (the list) | "
-        + " | ".join(f"rank {r}" for r in range(1, HEADLINE_DEPTH + 1)) + " |")
-    add("| --- | --- | --- | :---: | :---: | "
-        + " | ".join(":---:" for _ in range(HEADLINE_DEPTH)) + " |")
+    add("| arm | sorts on | positions | "
+        + " | ".join(f"k={d}" for d in ABLATION_DEPTHS) + " |")
+    add("| --- | --- | --- | "
+        + " | ".join(":---:" for _ in ABLATION_DEPTHS) + " |")
     for stats in pooled:
         arm = stats["arm"]
-        cells = [
-            f"`{arm}`", HEURISTICS[arm]["gloss"], "/".join(stats["positions"]),
-            f"{signed(top[arm]['mean_diff'])} {interval(top[arm])}",
-            f"**{signed(stats['mean_diff'])}** {interval(stats)}",
-        ]
-        for rank in range(1, HEADLINE_DEPTH + 1):
-            r = by_rank[(arm, rank)]
-            cells.append(f"{signed(r['mean_diff'])} {interval(r)}")
+        cells = [f"`{arm}`", HEURISTICS[arm]["gloss"],
+                 "/".join(stats["positions"])]
+        for d in ABLATION_DEPTHS:
+            row = by_depth[d][arm]
+            mark = "**" if d == HEADLINE_DEPTH else ""
+            cells.append(f"{mark}{signed(row['mean_diff'])}{mark} "
+                         f"{interval(row)}")
         add("| " + " | ".join(cells) + " |")
     add("")
-    add("Reading it: **the rank-1 column and the k=1 column are the same "
-        "comparison** — same key, same tiebreak, same player — so a margin that "
-        "appears at k=3 and not at k=1 is not the k=1 test being underpowered. "
-        "It is the arms differing in how far down the list they hold up. Every "
-        "one-liner's third name is worse than the model's third name; every "
-        "one-liner that is actually choosing has a first name as good as the "
-        "model's.")
+    add(f"**Rank by rank.** The same picks, broken out by position in the list "
+        "rather than averaged over it. This is where the pooled numbers above "
+        "come from, and it is not flat.")
+    add("")
+    add("| arm | " + " | ".join(f"rank {r}" for r in range(1, deepest + 1)) + " |")
+    add("| --- | " + " | ".join(":---:" for _ in range(deepest)) + " |")
+    for stats in pooled:
+        arm = stats["arm"]
+        cells = [f"`{arm}`"]
+        for rank in range(1, deepest + 1):
+            r = by_rank[(arm, rank)]
+            bold = "**" if readable(r) else ""
+            cells.append(f"{bold}{signed(r['mean_diff'])}{bold} {interval(r)}")
+        add("| " + " | ".join(cells) + " |")
+    add("")
+    add(f"Bold marks a margin that both excludes zero and clears the "
+        f"±{NOISE_FLOOR_PPG:.1f} ppg this measurement resolves. The bolded cells "
+        "are one column.")
+    add("")
+    add("**The rank-1 column and the k=1 column are the same comparison** — same "
+        "key, same tiebreak, same player, verified — so a margin that appears at "
+        "k=3 and not at k=1 is not the k=1 test being underpowered. It is the "
+        "arms differing in where in the list they hold up.")
     add("")
     add("#### The mechanism, in levels rather than differences")
     add("")
-    add("Mean PAR of the pick at each rank. The differences above are this table "
-        "read sideways, and it makes the shape of the result visible instead of "
-        "asserted.")
+    add("Mean PAR of the pick at each rank, weeks 2–14. **The model appears once "
+        "per pool.** `eb_share` has no quarterback branch, so the only model row "
+        "its levels can be differenced against is the one restricted to "
+        "RB/TE/WR; subtracting the four-position model row from it would compare "
+        "two different populations and give a number that appears nowhere in the "
+        "tables above.")
     add("")
     # Weeks 2-14, like every other number in this document. `head` is the whole
     # depth-k run and still carries weeks 15-17, whose forward windows are
     # truncated; averaging those in here and nowhere else would put a table on
     # the page that quietly disagrees with the one above it.
-    levels_by_rank = (
-        head[head["week"].isin(HEADLINE_WEEKS)]
-        .pivot_table(index="arm", columns="rank_within_arm", values="par",
-                     aggfunc="mean")
-    )
+    scoped = ablation[(ablation["depth"] == deepest)
+                      & ablation["week"].isin(HEADLINE_WEEKS)]
+    levels_by_rank = scoped.pivot_table(
+        index="arm", columns="rank_within_arm", values="par", aggfunc="mean")
+    # A model row restricted to each distinct arm coverage, so every arm's row
+    # has a commensurable model row to be read against.
+    for cover in {tuple(sorted(g["position"].unique()))
+                  for _, g in scoped.groupby("arm")}:
+        if len(cover) == len(scoped["position"].unique()):
+            continue
+        rows = scoped[(scoped["arm"] == "model")
+                      & scoped["position"].isin(cover)]
+        levels_by_rank.loc[f"model ({'/'.join(cover)})"] = (
+            rows.groupby("rank_within_arm")["par"].mean()
+        )
     first, last = levels_by_rank.columns[0], levels_by_rank.columns[-1]
     falls = levels_by_rank[first] - levels_by_rank[last]
-    best_first = levels_by_rank[first].idxmax()
+    contenders = [a for a in levels_by_rank.index if not a.startswith("model")]
+    best_first = levels_by_rank.loc[contenders, first].idxmax()
+    # The model row this arm is actually comparable against.
+    cover = "/".join(sorted(scoped.loc[scoped["arm"] == best_first,
+                                       "position"].unique()))
+    peer = next((i for i in levels_by_rank.index if i == f"model ({cover})"),
+                "model")
+    ordered_rows = ([i for i in levels_by_rank.index if i.startswith("model")]
+                    + [a for a in HEURISTICS if a in levels_by_rank.index])
     add("| arm | " + " | ".join(f"rank {r}" for r in levels_by_rank.columns)
-        + " | fall, rank 1 → 3 |")
+        + f" | fall, rank {first} → {last} |")
     add("| --- | " + " | ".join("---:" for _ in levels_by_rank.columns) + " | ---: |")
-    for arm in ["model"] + list(HEURISTICS):
-        if arm not in levels_by_rank.index:
-            continue
+    for arm in ordered_rows:
         row = levels_by_rank.loc[arm]
-        add(f"| `{arm}` | " + " | ".join(f"{row[c]:.2f}" for c in levels_by_rank.columns)
-            + f" | {row[levels_by_rank.columns[0]] - row[levels_by_rank.columns[-1]]:.2f} |")
+        add(f"| `{arm}` | "
+            + " | ".join(f"{row[c]:.2f}" for c in levels_by_rank.columns)
+            + f" | {falls[arm]:.2f} |")
     add("")
-    if best_first != "model":
-        add(f"**`{best_first}` names a better first player than the model does** "
-            f"— {levels_by_rank.loc[best_first, first]:.2f} ppg against the "
-            f"model's {levels_by_rank.loc['model', first]:.2f}, which is the "
-            "point estimate behind the "
-            f"{signed(by_rank[(best_first, 1)]['mean_diff'])} in the table "
-            f"above. It then falls {falls[best_first]:.2f} ppg across "
-            f"{HEADLINE_DEPTH} names while the model falls "
-            f"{falls['model']:.2f}. That is the whole result: the model is not "
-            "better at finding the best player at a position, it is better at "
-            "not running out of them.")
-    else:
-        add(f"The model names the best first player of any arm "
-            f"({levels_by_rank.loc['model', first]:.2f} ppg) and also falls "
-            f"least across {HEADLINE_DEPTH} names ({falls['model']:.2f}).")
+    add(f"**`{best_first}` names as good a first player as the model does.** On "
+        f"the pool it covers, {levels_by_rank.loc[best_first, first]:.2f} ppg "
+        f"against `{peer}`'s {levels_by_rank.loc[peer, first]:.2f} — the "
+        f"{signed(by_rank[(best_first, 1)]['mean_diff'])} in the table above, "
+        f"and far inside the ±{NOISE_FLOOR_PPG:.1f} ppg floor. Across "
+        f"{last} names it falls {falls[best_first]:.2f} ppg while that model row "
+        f"falls {falls[peer]:.2f}. **The model's advantage is not at the top of "
+        "the list** — and the model's own fall of "
+        f"{falls['model']:.2f} ppg says it runs out of names too, just later.")
     add("")
     add("Every level here is negative because replacement is a high-percentile "
         "bar — the third-best quarterback and the seventh-best receiver that "
@@ -1418,6 +1546,71 @@ def write_markdown(scored: pd.DataFrame, ablation: pd.DataFrame,
     add(f"A margin under ±{NOISE_FLOOR_PPG:.1f} ppg is inside what this "
         "measurement can resolve and is not a win in either direction, whatever "
         "its interval does — see the note on binning at the end.")
+    add("")
+
+    add("### Is the rank-3 result one season, or one position?")
+    add("")
+    peak_rank = 3
+    peak_cells = ablation[(ablation["depth"] == deepest)
+                          & (ablation["rank_within_arm"] == peak_rank)
+                          & ablation["week"].isin(HEADLINE_WEEKS)]
+    grouped = peak_cells.groupby(
+        ["season", "week", "position", "arm"], as_index=False
+    ).agg(mean=("par", "mean"))
+    add("**Not one season.** Dropping each replay season in turn and recomputing "
+        f"the rank-{peak_rank} margin:")
+    add("")
+    add("| arm | full | lowest without one season | highest without one season |")
+    add("| --- | ---: | ---: | ---: |")
+    for arm in HEURISTICS:
+        full = week_block_ci(grouped, arm)
+        loo = [week_block_ci(grouped[grouped["season"] != season], arm)["mean_diff"]
+               for season in REPLAY_SEASONS]
+        loo = [v for v in loo if not np.isnan(v)]
+        add(f"| `{arm}` | {signed(full['mean_diff'])} | {signed(min(loo))} | "
+            f"{signed(max(loo))} |")
+    add("")
+    add("No season carries it; the swing from removing any one of twelve is "
+        "smaller than the margin itself.")
+    add("")
+    add(f"**But it is one position per arm, and not the same one.** The rank-"
+        f"{peak_rank} margin, split by position:")
+    add("")
+    positions = sorted(peak_cells["position"].unique())
+    add("| arm | " + " | ".join(positions) + " |")
+    add("| --- | " + " | ".join(":---:" for _ in positions) + " |")
+    for arm in HEURISTICS:
+        cells = [f"`{arm}`"]
+        for position in positions:
+            stats = week_block_ci(grouped[grouped["position"] == position], arm)
+            if np.isnan(stats["mean_diff"]):
+                cells.append("n/a")
+            else:
+                bold = "**" if readable(stats) else ""
+                cells.append(f"{bold}{signed(stats['mean_diff'])}{bold} "
+                             f"{interval(stats)}")
+        add("| " + " | ".join(cells) + " |")
+    add("")
+    carriers = {}
+    for arm in HEURISTICS:
+        carriers[arm] = [
+            position for position in positions
+            if readable(week_block_ci(grouped[grouped["position"] == position], arm))
+        ]
+    spread = sorted({p for cols in carriers.values() for p in cols})
+    add("Each arm's deficit comes from "
+        + ("one or two positions" if max(len(c) for c in carriers.values()) > 1
+           else "a single position")
+        + " and the rest are nulls — "
+        + "; ".join(f"`{a}` at {'/'.join(c) if c else 'nowhere'}"
+                    for a, c in carriers.items())
+        + ". Four arms losing at "
+        + ("different positions" if len(spread) > 1 else "the same position")
+        + " is weaker corroboration than four arms losing together, and it is "
+        "part of why the recommendation above is hedged rather than stated "
+        "flat. The other part is that these are four comparisons against the "
+        "same model arm over the same 156 weeks, so their difference series are "
+        "correlated and 'all four agree' is closer to one result than to four.")
     add("")
 
     add("### By position")
@@ -1455,14 +1648,35 @@ def write_markdown(scored: pd.DataFrame, ablation: pd.DataFrame,
         "Beating one says nothing about the model, so the rate is reported rather "
         "than averaged in silently.")
     add("")
-    add("| arm | position | picks decided by the name tiebreak | players tied at the cut |")
-    add("| --- | --- | ---: | ---: |")
-    for _, row in ties.sort_values(["tie_rate"], ascending=False).iterrows():
-        if row["tie_rate"] < 0.01:
+    add("Reported at every depth the tables above use, because the rate is not "
+        "the same at each: a key that separates three names may not separate "
+        "one.")
+    add("")
+    add("| arm | position | " + " | ".join(f"k={d}" for d in ABLATION_DEPTHS)
+        + " | players tied at the cut (k=1) |")
+    add("| --- | --- | " + " | ".join("---:" for _ in ABLATION_DEPTHS)
+        + " | ---: |")
+    worst = (ties.groupby(["arm", "position"])["tie_rate"].max()
+             .sort_values(ascending=False))
+    for (arm, position), rate in worst.items():
+        if rate < 0.01:
             continue
-        mark = " ‡" if row["degenerate"] else ""
-        add(f"| `{row['arm']}` | {row['position']}{mark} | {row['tie_rate']:.1%} | "
-            f"{row['distinct_at_cut']:.1f} |")
+        cell = ties[(ties["arm"] == arm) & (ties["position"] == position)]
+        mark = " ‡" if cell["degenerate"].any() else ""
+        rates = " | ".join(
+            f"{cell.loc[cell['depth'] == d, 'tie_rate'].iloc[0]:.1%}"
+            if (cell["depth"] == d).any() else "—"
+            for d in ABLATION_DEPTHS
+        )
+        tied = cell.loc[cell["depth"] == 1, "distinct_at_cut"]
+        add(f"| `{arm}` | {position}{mark} | {rates} | "
+            + (f"{tied.iloc[0]:.1f} |" if len(tied) else "— |"))
+    add("")
+    add("‡ marks an arm-position that is degenerate at one or more of these "
+        "depths. `snap` at quarterback is the extreme case: its k=1 pick is "
+        "decided by the alphabet in **every** week, because the median week has "
+        "nine quarterbacks all at 100% of snaps. The model beating that is not a "
+        "result about the model.")
     add("")
     forced = overlaps[overlaps["identical"] >= 0.999]
     if not forced.empty:
