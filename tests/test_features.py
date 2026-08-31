@@ -17,6 +17,18 @@ shaped by 2024 and 2025. So it is asserted here rather than believed:
 - the prior-mask tests pin the fix itself: a masked fit must ignore the excluded
   rows entirely, and must reproduce fitting on the kept rows alone.
 
+Two source-data guards live here for the same reason -- both failure modes are
+silent, and both were found by the full-history replay in
+`outputs/backtests/02_walkforward_2014_2025.py`:
+
+- `EmptySourceTest` pins `require_rows`. `snap_counts_2012.csv` returns HTTP 200
+  and contains a header row and nothing else, so a fetch-succeeded check passes
+  and the season contributes no rows to the panel without anything failing.
+- `RelocationTest` pins the team-code normalisation. The three nflverse feeds
+  disagree on team codes before 2020 -- stats says `LA` for the 2013 Rams while
+  snaps and the schedule say `STL` -- which dropped three franchises from the
+  merge and left their `fwd3` NaN.
+
 Run:  python -m unittest discover -s tests
 """
 
@@ -27,7 +39,16 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from src.features import RAW_DIR, build, empirical_bayes_share, fit_beta_prior
+from src.features import (
+    RAW_DIR,
+    RELOCATIONS,
+    build,
+    empirical_bayes_share,
+    fit_beta_prior,
+    load_schedule,
+    normalize_teams,
+    require_rows,
+)
 
 # The two columns that are allowed to depend on which seasons are in the build.
 CROSS_SEASON_COLUMNS = {"eb_tgt_share", "eb_car_share"}
@@ -190,6 +211,56 @@ class CrossSeasonColumnTest(unittest.TestCase):
                 err_msg=f"{column} differs from the 2022-only build even with "
                         "prior_seasons=[2022]",
             )
+
+
+class EmptySourceTest(unittest.TestCase):
+    """A source file that parses but carries no rows must fail, not vanish.
+
+    This is the `snap_counts_2012.csv` failure mode: HTTP 200, 154 bytes, a
+    header row and no data. Checking that the fetch succeeded passes it; only
+    checking the parsed contents catches it.
+    """
+
+    def test_empty_frame_raises(self):
+        with self.assertRaises(SystemExit) as caught:
+            require_rows(pd.DataFrame(columns=["a", "b"]), RAW_DIR / "snap_counts_2012.csv")
+        self.assertIn("zero data rows", str(caught.exception))
+
+    def test_non_empty_frame_passes(self):
+        require_rows(pd.DataFrame({"a": [1]}), RAW_DIR / "snap_counts_2013.csv")
+
+
+class RelocationTest(unittest.TestCase):
+    """Historical team codes must resolve to one convention across all feeds."""
+
+    def test_relocated_codes_map_forward(self):
+        mapped = normalize_teams(pd.Series(["STL", "SD", "OAK"]))
+        self.assertEqual(mapped.tolist(), ["LA", "LAC", "LV"])
+
+    def test_unaffected_codes_are_untouched(self):
+        codes = ["KC", "NE", "LA", "LAC", "LV", "WAS", "JAX"]
+        self.assertEqual(normalize_teams(pd.Series(codes)).tolist(), codes)
+
+    def test_no_relocation_target_is_also_a_source(self):
+        """The map must not chain: mapping twice has to be a no-op."""
+        self.assertFalse(set(RELOCATIONS.values()) & set(RELOCATIONS))
+
+    def test_schedule_uses_modern_codes(self):
+        """A pre-2020 season's schedule must not carry a retired code.
+
+        Without this the `(season, week, team)` lookup in `forward_three` misses
+        for every relocated franchise and their fwd3 comes back NaN -- silently,
+        because a missing key is indistinguishable from a bye.
+        """
+        if not (RAW_DIR / "games.csv").exists():
+            self.skipTest("games.csv not fetched")
+        played, _ = load_schedule()
+        stale = {team for (_, _, team) in played if team in RELOCATIONS}
+        self.assertEqual(
+            stale, set(),
+            "load_schedule returned retired team codes; forward_three will not "
+            "match them against the panel, which uses modern franchise codes",
+        )
 
 
 if __name__ == "__main__":

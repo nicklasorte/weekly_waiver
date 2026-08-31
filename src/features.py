@@ -68,6 +68,36 @@ POSITIONS = ["QB", "RB", "WR", "TE"]
 # A player ranked below this in season-to-date scoring is treated as wire-available.
 ROSTER_DEPTH = {"QB": 18, "RB": 46, "WR": 60, "TE": 18}
 
+# Franchise relocations, keyed by the code the *source file* uses.
+#
+# The three nflverse feeds do not agree on team codes before 2020, and the
+# disagreement is silent because every code involved is a valid team somewhere.
+# `stats_player_week_{y}.csv` uses the modern franchise code in every season --
+# a 2013 Rams row says `LA` -- while `snap_counts_{y}.csv` and `games.csv` use
+# the code in force at the time (`STL`). Two things break as a result, and
+# neither raises:
+#
+#   1. The stats-to-snaps merge below joins on `team`, so every player on a
+#      relocated franchise fails to match and is dropped by the `matched`
+#      filter. In 2013 that is three franchises and 12.1% of stat rows against
+#      a ~2.5% baseline.
+#   2. `forward_three` asks whether `(season, week, team)` played a game, with
+#      `team` from the stats side and the schedule keyed the period-correct way.
+#      It never finds one, so `fwd3` -- the training target -- is NaN for every
+#      one of those players.
+#
+# Normalising to the modern code makes all three feeds agree. This is a no-op
+# from 2020 on (the last move was Oakland to Las Vegas in 2020), so it cannot
+# change anything the shipped 2022-2026 pipeline produces; it is what makes a
+# pre-2020 build correct rather than quietly short three teams.
+RELOCATIONS = {"STL": "LA", "SD": "LAC", "OAK": "LV"}
+
+
+def normalize_teams(teams: pd.Series) -> pd.Series:
+    """Historical team codes mapped to the modern franchise code."""
+    return teams.replace(RELOCATIONS)
+
+
 # Neutral script: plays where the possession team's pre-snap win probability
 # is in this range. Outside it, one side is already playing from ahead or
 # behind, and volume stops describing the player and starts describing the
@@ -97,6 +127,19 @@ def join_key(names: pd.Series) -> pd.Series:
     )
 
 
+def require_rows(frame: pd.DataFrame, path: Path) -> None:
+    """Fail loudly on a source file that parsed but carries no data rows."""
+    if frame.empty:
+        raise SystemExit(
+            f"{path.name} has zero data rows. The file exists and parsed, so a "
+            "fetch-succeeded check passes and the season would contribute "
+            "nothing to the panel without ever failing. nflverse publishes "
+            "header-only assets for seasons it does not cover -- snap counts "
+            "begin in 2013 -- so this most likely means the season is out of "
+            "range for this source rather than that the download broke."
+        )
+
+
 def load_season(year: int) -> pd.DataFrame | None:
     """Weekly stats joined to snap share for one season, or None if not fetched."""
     stats_path = RAW_DIR / f"stats_player_week_{year}.csv"
@@ -106,15 +149,25 @@ def load_season(year: int) -> pd.DataFrame | None:
         return None
 
     stats = pd.read_csv(stats_path, low_memory=False)
+    # A season asset can exist, return HTTP 200 and contain nothing but a header
+    # row -- `snap_counts_2012.csv` is exactly that, 154 bytes of column names.
+    # An availability check passes, the frame reads back empty, and the season
+    # silently contributes no rows to the panel instead of failing. Assert on
+    # the contents, not on the fetch.
+    require_rows(stats, stats_path)
     stats = stats[
         (stats["season_type"] == "REG") & (stats["position"].isin(POSITIONS))
     ].copy()
 
     snaps = pd.read_csv(snaps_path, low_memory=False)
+    require_rows(snaps, snaps_path)
     snaps = snaps[snaps["game_type"] == "REG"].copy()
 
     stats["season"] = year
     snaps["season"] = year
+    # snap_counts uses the period-correct code, stats uses the modern one; see
+    # RELOCATIONS. Without this the merge below drops three franchises in 2013.
+    snaps["team"] = normalize_teams(snaps["team"])
     stats["join_key"] = join_key(stats["player_display_name"])
     snaps["join_key"] = join_key(snaps["player"])
 
@@ -307,7 +360,13 @@ def load_schedule(
     committed fixture so they do not depend on `make data` having run.
     """
     games = pd.read_csv(games_path or (RAW_DIR / "games.csv"), low_memory=False)
+    require_rows(games, Path(games_path or (RAW_DIR / "games.csv")))
     games = games[games["game_type"] == "REG"]
+    # games.csv is period-correct (`STL` in 2013); the panel carries the modern
+    # code from the stats feed. Normalise or every relocated-franchise player
+    # looks like he had a bye every week and his fwd3 comes back NaN.
+    for column in ("home_team", "away_team"):
+        games[column] = normalize_teams(games[column])
     played = set(
         zip(games["season"], games["week"], games["away_team"])
     ) | set(zip(games["season"], games["week"], games["home_team"]))
