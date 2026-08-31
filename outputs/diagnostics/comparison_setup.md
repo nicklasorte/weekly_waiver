@@ -53,17 +53,51 @@ exactly that row.
 
 ## Scoring
 
-Outcome for every pick, every arm, is `fwd3`: the player's mean points over
-weeks W+1..W+3 under NCFOM scoring, **counting a week his team played and he did
-not as 0.0**. Same convention the models train on. A recommendation who stops
+> **Amended 2026-08-31.** This section originally scored every arm on raw
+> `fwd3`. It now scores on **points above replacement at position**. The
+> thresholds of the pre-registered rule are unchanged; the quantity they are
+> applied to is not. The amendment was made before the rule had ever been
+> evaluated on live data — one dry-run week (2025 wk08, `repo` only) is on file
+> and no `prompt` arm has been logged, so no paired difference and no verdict
+> existed to revise. The original wording is preserved below the rule for
+> comparison. Reasoning and consequences:
+> `outputs/diagnostics/par_rescore_and_ablation.md`.
+
+Outcome for every pick, every arm, resolves to `fwd3`: the player's mean points
+over weeks W+1..W+3 under NCFOM scoring, **counting a week his team played and he
+did not as 0.0**. Same convention the models train on. A recommendation who stops
 playing is scored as the failure it is, rather than dropped from the average the
 way `fwd3_played` would drop it.
 
-Reported per arm: `n`, mean points captured, share of the weekly ceiling
-captured (the best fwd3 anyone on the wire posted that week), and share of weeks
-beating the naive arm head to head. "Beat" is strict — a tie is not a win, and
-an arm that recommends the same player naive would have is scored as having
-added nothing.
+`fwd3` stays on every graded row and in every CSV. The **headline comparison and
+the decision rule run on PAR**:
+
+    par = fwd3 - replacement_level(the position's resolved wire pool, position)
+
+using `report.replacement_level` and `report.REPLACEMENT_RANK` — one definition,
+shared with the weekly table's tiering, so the two cannot drift. The baseline is
+a function of the pool and the position alone: no arm's picks or ranking can
+move it.
+
+Why: raw `fwd3` is fantasy points, quarterbacks score roughly three times what a
+running back does, and an arm that sorts on raw points loads up on quarterbacks
+and banks the positional difference as if it were skill. You start one. The
+twelve-season walk-forward replay put **93% of the naive arm's 2.30 ppg margin on
+positional composition rather than ranking**, which is a scoring artefact rather
+than a strategy.
+
+What PAR does not do, stated here rather than discovered later: subtracting a
+per-(week, position) constant **re-prices** positional composition, it does not
+remove it. Replacement level sits above the pool mean at every position and
+furthest above it at quarterback, so PAR penalises a quarterback-heavy arm
+rather than merely declining to reward it. Read any PAR margin next to its
+mix/selection split, not on its own.
+
+Reported per arm: `n`, mean PAR, mean raw points captured, share of the weekly
+ceiling captured (the best fwd3 anyone on the wire posted that week), and share
+of weeks beating the naive arm head to head **on PAR**. "Beat" is strict — a tie
+is not a win, and an arm that recommends the same player naive would have is
+scored as having added nothing.
 
 Then a paired `prompt` vs `repo` comparison on the weeks both arms covered, with
 a bootstrap CI and a paired t-test on the differences.
@@ -120,10 +154,14 @@ as a revision to the rule. `verdict()` implements exactly this, in this order:
 
 | condition | verdict |
 | --- | --- |
-| neither arm beats naive by >= 1.5 ppg | the analysis is decoration |
-| prompt and repo within 1.0 ppg | repo adds nothing, keep the prompt |
-| repo beats prompt by >= 1.5 ppg | the data layer earns its keep |
+| neither arm beats naive by >= 1.5 ppg PAR | the analysis is decoration |
+| prompt and repo within 1.0 ppg PAR | repo adds nothing, keep the prompt |
+| repo beats prompt by >= 1.5 ppg PAR | the data layer earns its keep |
 | anything else | inconclusive, reported as such |
+
+The margins are the pre-registered ones and have not moved. What moved is the
+quantity: **ppg means PAR, not raw `fwd3`** — see the amendment note under
+Scoring. Before the amendment the same table read `ppg` and meant raw points.
 
 The rule reads point estimates, and a point estimate is not evidence. With
 around 13 weeks and the per-player variance in wire outcomes, a 1.5 ppg gap sits

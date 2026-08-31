@@ -1,3 +1,3 @@
-arm,weeks,n,mean_fwd3,ceiling_share,beat_naive_share
-naive,1,3,10.6600,0.5256,
-repo,1,3,10.5222,0.5188,0.0000
+arm,weeks,n,mean_par,mean_fwd3,ceiling_share,beat_naive_share
+naive,1,3,1.9822,10.6600,0.5256,
+repo,1,3,4.7944,10.5222,0.5188,1.0000

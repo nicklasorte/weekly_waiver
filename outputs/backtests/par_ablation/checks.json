@@ -1,0 +1,26 @@
+{
+  "pool": {
+    "pool_mean_gap": 5.000000000077165e-05,
+    "pool_n_gap": 0
+  },
+  "invariance": {
+    "season": 2020,
+    "cells": 60,
+    "max_gap": 0.0
+  },
+  "gates": [
+    {
+      "arm": "naive",
+      "rows": 555,
+      "player_matches": 555,
+      "max_fwd3_gap": 3.33333333379926e-05
+    },
+    {
+      "arm": "repo",
+      "rows": 555,
+      "player_matches": 555,
+      "max_fwd3_gap": 3.33333333379926e-05
+    }
+  ],
+  "par_invariance": 5.329070518200751e-15
+}

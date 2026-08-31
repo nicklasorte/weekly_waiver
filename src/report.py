@@ -239,6 +239,28 @@ def evidence(row: pd.Series, pool: pd.DataFrame) -> str:
     return " and ".join(text for _, text in scored[:2])
 
 
+def replacement_level(values: pd.Series, position: str) -> float:
+    """The value of the next player at `position` you would actually take.
+
+    One definition of replacement level, in one place, so that the weekly
+    table, the ledger and the backtests cannot drift apart on what "above
+    replacement" means. `values` is whatever quantity the comparison is being
+    made in -- projected points when tiering a candidate table, realised `fwd3`
+    when scoring an outcome after the fact -- ordered best-first, and the
+    baseline is the entry at `REPLACEMENT_RANK[position]`.
+
+    Zero-indexed, so QB rank 2 is the *third*-best available quarterback: pass
+    on a claim and that is who you get. A pool shorter than the rank clamps to
+    its last entry rather than raising, because a thin week is a real week and
+    the honest baseline there is the worst player actually available.
+    """
+    rank = REPLACEMENT_RANK.get(position, 5)
+    ordered = np.sort(values.dropna().to_numpy(dtype=float))[::-1]
+    if len(ordered) == 0:
+        return float("nan")
+    return float(ordered[min(rank, len(ordered) - 1)])
+
+
 def with_edge(table: pd.DataFrame) -> pd.DataFrame:
     """Points above replacement at the same position.
 
@@ -257,14 +279,8 @@ def with_edge(table: pd.DataFrame) -> pd.DataFrame:
     the baseline. Passing on a claim gets you that player, not the median.
     """
     table = table.copy()
-
-    def baseline(group: pd.Series) -> float:
-        rank = REPLACEMENT_RANK.get(group.name, 5)
-        ordered = group.sort_values(ascending=False).to_numpy()
-        return float(ordered[min(rank, len(ordered) - 1)])
-
     levels = table.groupby("position")["proj_pts"].transform(
-        lambda g: baseline(g)
+        lambda g: replacement_level(g, g.name)
     )
     table["edge"] = table["proj_pts"] - levels
     return table
