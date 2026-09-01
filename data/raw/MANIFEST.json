@@ -65,10 +65,15 @@
       "sha256": "f5a4aa3fa70150e810b2255200c8735a6c1cc8ff77361308ce39149345b39b4a",
       "bytes": 52917870
     },
+    "depth_charts_2026.csv": {
+      "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2026.csv",
+      "sha256": "152c46620a5723377fec45728b61d133e93c4cad48ba561eda96b0cb984b8758",
+      "bytes": 46604285
+    },
     "games.csv": {
       "url": "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv",
-      "sha256": "81ca204bc1ee8e79006aa55bcfcfcad1052eaeca18b56f381ba40edcca51eb51",
-      "bytes": 2177173
+      "sha256": "fc3d0aea4ddf9e00fdbbd8660ea8aed77c0d9d98c63ce3e330145bdfbc857e94",
+      "bytes": 2177176
     },
     "play_by_play_2013.csv.gz": {
       "url": "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_2013.csv.gz",
