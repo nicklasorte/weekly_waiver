@@ -67,13 +67,13 @@
     },
     "depth_charts_2026.csv": {
       "url": "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2026.csv",
-      "sha256": "886ef237765d0953eb6053ca38bce0561452c11521309c8980e98c6522a3f6f4",
-      "bytes": 73462109
+      "sha256": "6bb66d57189abc8c0f9d91c50061f185b1d430ed0e516ede56ea53359cb1ab23",
+      "bytes": 76361428
     },
     "games.csv": {
       "url": "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv",
-      "sha256": "b0a67e5889c9ad845d6f73ee41a68fbc2cbac9dd1f4272adf73d5a765a3f848f",
-      "bytes": 2188995
+      "sha256": "6169c47e39566a0f48d6c47c55214d1e28e1b360d1fde45c2b47557324ba84a7",
+      "bytes": 2190100
     },
     "play_by_play_2013.csv.gz": {
       "url": "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_2013.csv.gz",
@@ -142,8 +142,8 @@
     },
     "play_by_play_2026.csv.gz": {
       "url": "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_2026.csv.gz",
-      "sha256": "06d5d1be5579800b26bb80fbcb8512c9aef762bb38428a74f86757e25e79981b",
-      "bytes": 9346187
+      "sha256": "fc82ebbd05588bbc36952eea0048d319018ef2f266323a1aafff3167c32a7c8d",
+      "bytes": 10547333
     },
     "snap_counts_2013.csv": {
       "url": "https://github.com/nflverse/nflverse-data/releases/download/snap_counts/snap_counts_2013.csv",
@@ -212,8 +212,8 @@
     },
     "snap_counts_2026.csv": {
       "url": "https://github.com/nflverse/nflverse-data/releases/download/snap_counts/snap_counts_2026.csv",
-      "sha256": "354729bdea65e782b8e559354dcdcc55d4ece586dfbcd00adf263523092b12b7",
-      "bytes": 1139048
+      "sha256": "f8fa8e23e3c12ef29dacbfaf55d0ac3b6fe63ad3c1fd4557baa5e0765fc93d57",
+      "bytes": 1258135
     },
     "stats_player_week_2013.csv": {
       "url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2013.csv",
@@ -282,8 +282,8 @@
     },
     "stats_player_week_2026.csv": {
       "url": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2026.csv",
-      "sha256": "edac7bfc5969a8ec553d8b0e3d9e479e924b8492fd048139f83c6e9e306887e6",
-      "bytes": 4210589
+      "sha256": "83d428787dab3467e07f8587956bc1ac8df4a788f27ffc4746adba4136399e5e",
+      "bytes": 4648944
     }
   }
 }
